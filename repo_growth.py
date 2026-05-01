@@ -8,7 +8,7 @@ Run the script to launch the Tk GUI:
 Pick a repository folder, choose a detail level, click Generate. The chart
 is saved inside the repo at <repo>/Repo Growth/<repo>_growth_<date>.html.
 
-Detail levels (target data points): Rough ~100, Standard ~300, Detailed ~1500.
+Detail levels (target data points): Rough ~100, Standard ~300, Detailed ~900.
 The newest commit is always included so the right edge of every chart
 reflects current state.
 
@@ -132,7 +132,7 @@ def pick_sample_step(n, target=300):
     return max(1, n // target)
 
 
-DETAIL_TARGETS = {"Rough": 100, "Standard": 300, "Detailed": 1500}
+DETAIL_TARGETS = {"Rough": 100, "Standard": 300, "Detailed": 900}
 
 
 def analyse_repo(repo_path, branch=None, progress=print, target_points=300):

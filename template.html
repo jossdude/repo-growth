@@ -391,25 +391,39 @@ function drawChurnChart(canvas, churn) {
   const n = churn.length;
   if (!n) return;
 
-  const maxY = Math.max(...churn.map(c => Math.max(c.added, c.removed))) * 1.1 || 1;
+  // Cap Y axis when a single bar (typically a bulk-paste commit) would dwarf
+  // the rest. Only kicks in when rawMax exceeds 6x the 90th percentile;
+  // bars above the cap clip at the top with a brighter accent stripe.
+  const _all = churn.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a,b) => a-b);
+  const _p90 = _all.length ? _all[Math.floor(_all.length * 0.90)] : 0;
+  const rawMax = Math.max(...churn.map(c => Math.max(c.added, c.removed))) || 1;
+  const cap = _p90 * 3;
+  const clipping = cap > 0 && rawMax > cap * 2;
+  const maxY = clipping ? cap : rawMax * 1.1;
   drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
 
   const slotW = CW / n;
   const barW  = Math.max(1, slotW * 0.35);
   const rects = [];
 
+  function drawBar(x, value, fill, accent) {
+    const raw = (value / maxY) * CH;
+    const h = Math.min(raw, CH);
+    if (h <= 0) return;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, PAD.top + CH - h, barW, h, 1); else ctx.rect(x, PAD.top + CH - h, barW, h);
+    ctx.fill();
+    if (value > maxY) {
+      ctx.fillStyle = accent;
+      ctx.fillRect(x, PAD.top, barW, 2);
+    }
+  }
+
   churn.forEach((c,i) => {
     const cx = PAD.left + (i+0.5)*slotW;
-    const ah = (c.added/maxY)*CH;
-    ctx.fillStyle='#00e5a055';
-    ctx.beginPath();
-    if(ctx.roundRect) ctx.roundRect(cx-barW-1, PAD.top+CH-ah, barW, ah, 1); else ctx.rect(cx-barW-1, PAD.top+CH-ah, barW, ah);
-    ctx.fill();
-    const rh = (c.removed/maxY)*CH;
-    ctx.fillStyle='#ff6b6b55';
-    ctx.beginPath();
-    if(ctx.roundRect) ctx.roundRect(cx+1, PAD.top+CH-rh, barW, rh, 1); else ctx.rect(cx+1, PAD.top+CH-rh, barW, rh);
-    ctx.fill();
+    drawBar(cx - barW - 1, c.added,   '#00e5a055', '#00e5a0');
+    drawBar(cx + 1,         c.removed, '#ff6b6b55', '#ff6b6b');
     rects.push({cx, slotW, c, i});
   });
 
@@ -428,7 +442,11 @@ function drawChurnChart(canvas, churn) {
     const idx = Math.floor((mx - PAD.left) / slotW);
     if (idx >= 0 && idx < n) {
       const c = churn[idx];
-      showTip(e, `<div class="t-date">${c.date}</div><div class="t-add">+${c.added.toLocaleString()} added</div><div class="t-rem">−${c.removed.toLocaleString()} removed</div>`);
+      const clipped = c.added > maxY || c.removed > maxY;
+      const note = clipped
+        ? `<div class="t-sub">scaled to fit — Y axis capped at ${Math.round(maxY).toLocaleString()}</div>`
+        : '';
+      showTip(e, `<div class="t-date">${c.date}</div><div class="t-add">+${c.added.toLocaleString()} added</div><div class="t-rem">−${c.removed.toLocaleString()} removed</div>${note}`);
     } else hideTip();
   };
   canvas.onmouseleave = hideTip;

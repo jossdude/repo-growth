@@ -32,7 +32,7 @@ The script samples commits evenly across history and always includes the newest 
 |----------|--------------:|---------------------------------------------------------|
 | Rough    | ~100          | Fastest. Coarse line for very large repos.              |
 | Standard | ~300          | Balanced default.                                       |
-| Detailed | ~1500         | Near-every-commit on small/medium repos; slow on huge.  |
+| Detailed | ~900          | Near-every-commit on small/medium repos; slow on huge.  |
 
 ## How it works
 
