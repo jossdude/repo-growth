@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+.Python
+
+# Generated chart output
+Repo Growth/
+*_growth_*.html
+repo_growth.html
+_smoke.html
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.bak
