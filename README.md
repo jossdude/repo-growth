@@ -37,3 +37,11 @@ The script samples commits evenly across history and always includes the newest 
 ## How it works
 
 For each sampled commit, the script walks the tree and counts non-binary lines and file types. Churn between consecutive sampled commits comes from `git diff --numstat`. Everything is bundled into a single HTML file with vanilla-canvas charts — no JS dependencies, works offline.
+
+## Project layout
+
+- `repo_growth.py` — analysis core (commit traversal, line counts, churn, sampling) and `generate_html`, which substitutes the template.
+- `gui.py` — Tk GUI; imports the analysis functions from `repo_growth`.
+- `template.html` — the chart page (HTML + CSS + JS). Placeholders like `{{DATA_JSON}}` are filled in by `generate_html`.
+
+Edit `template.html` directly to tweak styling or chart logic — no Python brace-escaping needed.
