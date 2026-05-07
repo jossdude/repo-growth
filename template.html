@@ -392,13 +392,14 @@ function drawChurnChart(canvas, churn) {
   if (!n) return;
 
   // Cap Y axis when a single bar (typically a bulk-paste commit) would dwarf
-  // the rest. Only kicks in when rawMax exceeds 6x the 90th percentile;
-  // bars above the cap clip at the top with a brighter accent stripe.
+  // the rest. Only kicks in for true extreme outliers: cap = 5x the 95th
+  // percentile, and clipping only triggers when rawMax exceeds that cap.
+  // Bars above the cap clip at the top with a brighter accent stripe.
   const _all = churn.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a,b) => a-b);
-  const _p90 = _all.length ? _all[Math.floor(_all.length * 0.90)] : 0;
+  const _p95 = _all.length ? _all[Math.min(_all.length - 1, Math.floor(_all.length * 0.95))] : 0;
   const rawMax = Math.max(...churn.map(c => Math.max(c.added, c.removed))) || 1;
-  const cap = _p90 * 3;
-  const clipping = cap > 0 && rawMax > cap * 2;
+  const cap = _p95 * 5;
+  const clipping = cap > 0 && rawMax > cap;
   const maxY = clipping ? cap : rawMax * 1.1;
   drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
 
