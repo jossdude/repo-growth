@@ -76,7 +76,9 @@
   /* ---------- Scrollytelling sections ---------- */
   .story {
     position: relative;
-    height: 220vh;            /* total scroll distance for one chart */
+    /* ~120vh of "build" + ~60vh of dwell on the completed chart before the
+       next section slides in. See BUILD_PORTION in the script. */
+    height: 280vh;
     border-top: 1px solid var(--border);
   }
   .sticky {
@@ -241,7 +243,7 @@
   }
 
   @media (max-width: 700px) {
-    .story { height: 180vh; }
+    .story { height: 240vh; }
     .chart-head { flex-direction: column; align-items: flex-start; gap: 4px; }
     .readout { text-align: left; }
     .progress-rail { display: none; }
@@ -547,13 +549,19 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
 
 /* ---------------- Scroll → progress wiring ---------------- */
 
+/* The graph finishes building once we've scrolled BUILD_PORTION of the way
+   through the section's scrollable distance; the remainder is a dwell zone
+   where the completed chart stays put before the next section slides in. */
+const BUILD_PORTION = 2 / 3;
+
 function sectionProgress(section) {
   const rect = section.getBoundingClientRect();
   const sectionH = section.offsetHeight;
   const vh = window.innerHeight;
   const scrollable = sectionH - vh;
   if (scrollable <= 0) return rect.top < 0 ? 1 : 0;
-  return Math.max(0, Math.min(1, -rect.top / scrollable));
+  const raw = -rect.top / scrollable;
+  return Math.max(0, Math.min(1, raw / BUILD_PORTION));
 }
 
 const sections = {
@@ -591,20 +599,43 @@ function renderLegend(extInfo) {
   });
 }
 
+/* Smoothed progress: scroll sets `target`, a RAF loop lerps `current` toward
+   it so the line/area visibly "grows" between scroll steps instead of snapping.
+   Without this, a single mouse-wheel notch on a long repo skips many commits
+   at once and the chart looks like it teleports. */
+const progressState = {
+  lines: { current: 0, target: 0 },
+  files: { current: 0, target: 0 },
+  exts:  { current: 0, target: 0 },
+};
+let railCurrent = 0, railTarget = 0;
+
+const SMOOTHING = 0.14;   // fraction of the gap closed per frame (~60fps)
+const SETTLE_EPS = 0.0005;
+
+function readTargets() {
+  progressState.lines.target = sectionProgress(sections.lines);
+  progressState.files.target = sectionProgress(sections.files);
+  progressState.exts.target  = sectionProgress(sections.exts);
+  const docH = document.documentElement.scrollHeight - window.innerHeight;
+  railTarget = docH > 0 ? Math.max(0, Math.min(1, window.scrollY / docH)) : 0;
+}
+
+function stepToward(state) {
+  const diff = state.target - state.current;
+  if (Math.abs(diff) <= SETTLE_EPS) { state.current = state.target; return false; }
+  state.current += diff * SMOOTHING;
+  return true;
+}
+
 function redraw() {
-  // Lines
-  let p = sectionProgress(sections.lines);
-  let res = drawAnimatedLine(canvases.lines, DATA, 'lines', '#00e5a0', p);
+  let res = drawAnimatedLine(canvases.lines, DATA, 'lines', '#00e5a0', progressState.lines.current);
   if (res) updateLineReadout('lines', res.edgeIdx, res.edgeValue, 'lines');
 
-  // Files
-  p = sectionProgress(sections.files);
-  res = drawAnimatedLine(canvases.files, DATA, 'files', '#0090ff', p);
+  res = drawAnimatedLine(canvases.files, DATA, 'files', '#0090ff', progressState.files.current);
   if (res) updateLineReadout('files', res.edgeIdx, res.edgeValue, 'files');
 
-  // Exts
-  p = sectionProgress(sections.exts);
-  res = drawAnimatedStacked(canvases.exts, DATA, EXTS, EXT_COLORS.slice(0, EXTS.length), p);
+  res = drawAnimatedStacked(canvases.exts, DATA, EXTS, EXT_COLORS.slice(0, EXTS.length), progressState.exts.current);
   if (res) {
     const d = DATA[res.edgeIdx];
     if (d) {
@@ -614,24 +645,45 @@ function redraw() {
     renderLegend(res.edgeExt);
   }
 
-  // Overall page progress (rail on the right)
-  const docH = document.documentElement.scrollHeight - window.innerHeight;
-  const pct = docH > 0 ? Math.max(0, Math.min(1, window.scrollY / docH)) : 0;
-  document.getElementById('progressFill').style.height = (pct * 100) + '%';
+  document.getElementById('progressFill').style.height = (railCurrent * 100) + '%';
 }
 
-let queued = false;
+let animating = false;
+function tick() {
+  let moving = false;
+  moving = stepToward(progressState.lines) || moving;
+  moving = stepToward(progressState.files) || moving;
+  moving = stepToward(progressState.exts)  || moving;
+  const railDiff = railTarget - railCurrent;
+  if (Math.abs(railDiff) > SETTLE_EPS) { railCurrent += railDiff * SMOOTHING; moving = true; }
+  else { railCurrent = railTarget; }
+
+  redraw();
+  if (moving) requestAnimationFrame(tick);
+  else animating = false;
+}
+
+function ensureAnimating() {
+  if (animating) return;
+  animating = true;
+  requestAnimationFrame(tick);
+}
+
 function onScroll() {
-  if (queued) return;
-  queued = true;
-  requestAnimationFrame(() => {
-    redraw();
-    queued = false;
-  });
+  readTargets();
+  ensureAnimating();
+}
+
+function onResize() {
+  // Resize must redraw immediately — canvas dimensions changed.
+  readTargets();
+  for (const k of Object.keys(progressState)) progressState[k].current = progressState[k].target;
+  railCurrent = railTarget;
+  redraw();
 }
 
 window.addEventListener('scroll', onScroll, { passive: true });
-window.addEventListener('resize', onScroll);
+window.addEventListener('resize', onResize);
 
 /* ---------------- Outro stats ---------------- */
 (function renderOutro() {
