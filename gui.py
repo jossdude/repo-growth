@@ -175,6 +175,9 @@ def launch_gui():
     def log(msg):
         msgs.put(("log", str(msg)))
 
+    def report_pct(v):
+        msgs.put(("pct", float(v)))
+
     def pick_repo():
         path = filedialog.askdirectory(title="Choose a Git repository")
         if path:
@@ -220,11 +223,14 @@ def launch_gui():
         run_btn.configure(state="disabled")
         open_static_btn.configure(state="disabled")
         open_animated_btn.configure(state="disabled")
-        progress_bar.start(10)
+        progress_bar.configure(value=0)
 
         def worker():
             try:
-                analysis = analyse_repo(repo_path, progress=log, target_points=target)
+                analysis = analyse_repo(
+                    repo_path, progress=log, target_points=target,
+                    progress_pct=report_pct,
+                )
                 produced = {"static": "", "animated": ""}
                 if want_static:
                     generate_html(analysis, out_static, progress=log)
@@ -244,8 +250,10 @@ def launch_gui():
                 kind, payload = msgs.get_nowait()
                 if kind == "log":
                     write_log(payload + "\n")
+                elif kind == "pct":
+                    progress_bar.configure(value=payload * 100)
                 elif kind == "done":
-                    progress_bar.stop()
+                    progress_bar.configure(value=100)
                     run_btn.configure(state="normal")
                     last_output["static"]   = payload.get("static", "")
                     last_output["animated"] = payload.get("animated", "")
@@ -258,7 +266,7 @@ def launch_gui():
                     parts = [p for p in (last_output["static"], last_output["animated"]) if p]
                     write_log("\nDone — saved to:\n  " + "\n  ".join(parts) + "\n")
                 elif kind == "error":
-                    progress_bar.stop()
+                    progress_bar.configure(value=0)
                     run_btn.configure(state="normal")
                     write_log(f"\nERROR: {payload}\n")
                     messagebox.showerror("Repo Growth", payload)
@@ -334,7 +342,7 @@ def launch_gui():
     )
     open_animated_btn.pack(side="left", padx=(8, 0))
 
-    progress_bar = ttk.Progressbar(outer, mode="indeterminate")
+    progress_bar = ttk.Progressbar(outer, mode="determinate", maximum=100, value=0)
     progress_bar.grid(row=4, column=0, sticky="ew", pady=(0, 14))
 
     log_frame = ttk.Frame(outer)

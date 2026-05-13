@@ -76,14 +76,19 @@ def get_commit_frequency_weekly(all_commits):
     return dict(sorted(weekly.items()))
 
 
-def get_churn(repo, commits, progress=print):
+def get_churn(repo, commits, progress=print, on_pair=None):
     """Lines added/removed between consecutive (possibly sampled) commits.
 
     Uses `git diff --numstat`, which is much faster than building patches
     and parsing +/- lines in Python.
+
+    `on_pair(i, total)` (optional) is called after every diff with the
+    1-based pair index and the total number of pairs — used by callers that
+    want determinate progress.
     """
     churn = []
     n = len(commits)
+    total_pairs = max(0, n - 1)
     for i in range(1, n):
         prev, curr = commits[i - 1], commits[i]
         added = removed = 0
@@ -101,6 +106,9 @@ def get_churn(repo, commits, progress=print):
             pass
         date_str = datetime.fromtimestamp(curr.committed_date).strftime("%Y-%m-%d")
         churn.append({"date": date_str, "added": added, "removed": removed})
+        if on_pair is not None:
+            try: on_pair(i, total_pairs)
+            except Exception: pass
         if i % 50 == 0:
             progress(f"  churn [{i}/{n - 1}]")
     return churn
@@ -142,7 +150,22 @@ def pick_sample_step(n, target=300):
 DETAIL_TARGETS = {"Rough": 100, "Standard": 300, "Detailed": 900}
 
 
-def analyse_repo(repo_path, branch=None, progress=print, target_points=300):
+def analyse_repo(repo_path, branch=None, progress=print, target_points=300, progress_pct=None):
+    # Sampling traverses every blob in every sampled commit; churn just runs
+    # `git diff --numstat` between pairs. Sampling dominates total runtime
+    # on every real-world repo I've measured, so we weight it more heavily.
+    SAMPLE_WEIGHT = 0.7
+    CHURN_WEIGHT  = 1.0 - SAMPLE_WEIGHT
+
+    def _pct(v):
+        if progress_pct is None:
+            return
+        try:
+            progress_pct(max(0.0, min(1.0, v)))
+        except Exception:
+            pass
+
+    _pct(0.0)
     progress(f"Opening repo at: {repo_path}")
     repo = git.Repo(repo_path)
 
@@ -207,12 +230,18 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300):
             if delta > biggest_jump["delta"]:
                 biggest_jump = {"delta": delta, "date": date_str, "message": msg}
 
+        if len(sampled):
+            _pct(SAMPLE_WEIGHT * ((idx + 1) / len(sampled)))
         if (idx + 1) % 10 == 0 or (idx + 1) == len(sampled):
             pct = (idx + 1) / len(sampled) * 100
             progress(f"  [{idx+1}/{len(sampled)}] {pct:.0f}%  {date_str} — {lines:,} lines, {files} files")
 
     progress("Calculating churn...")
-    churn = get_churn(repo, sampled, progress=progress)
+    churn = get_churn(
+        repo, sampled, progress=progress,
+        on_pair=lambda i, n: _pct(SAMPLE_WEIGHT + CHURN_WEIGHT * (i / n)) if n else None,
+    )
+    _pct(1.0)
 
     final_exts = data_points[-1]["ext_lines"] if data_points else {}
     top_exts = sorted(final_exts, key=lambda e: final_exts[e], reverse=True)[:6]
