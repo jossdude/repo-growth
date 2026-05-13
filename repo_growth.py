@@ -121,6 +121,13 @@ def default_output_path(repo_path):
     return os.path.join(repo_path, REPO_GROWTH_DIRNAME, f"{safe}_growth_{today}.html")
 
 
+def animated_output_path(static_path):
+    """Derive the animated-output path from a static one by inserting
+    "_animated" before the extension. Keeps both files in the same folder."""
+    base, ext = os.path.splitext(static_path)
+    return f"{base}_animated{ext}"
+
+
 def pick_sample_step(n, target=300):
     """Step size so list[::step] yields ~`target` items.
 
@@ -236,12 +243,12 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300):
     }
 
 
-def generate_html(analysis, output_path, progress=print):
-    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template.html")
+def _render_template(template_name, analysis):
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), template_name)
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
-    html = (template
+    return (template
         .replace("{{REPO_NAME}}",     analysis["repo_name"])
         .replace("{{BRANCH}}",        analysis["branch"])
         .replace("{{TOTAL_COMMITS}}", f"{analysis['total_commits']:,}")
@@ -252,12 +259,22 @@ def generate_html(analysis, output_path, progress=print):
         .replace("{{STATS_JSON}}",    json.dumps(analysis["stats"]))
     )
 
+
+def _write_html(html, output_path, progress):
     parent = os.path.dirname(output_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
     progress(f"Chart saved to: {output_path}")
+
+
+def generate_html(analysis, output_path, progress=print):
+    _write_html(_render_template("template.html", analysis), output_path, progress)
+
+
+def generate_animated_html(analysis, output_path, progress=print):
+    _write_html(_render_template("template_animated.html", analysis), output_path, progress)
 
 if __name__ == "__main__":
     from gui import launch_gui

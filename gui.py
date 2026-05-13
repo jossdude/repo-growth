@@ -10,7 +10,9 @@ from tkinter import filedialog, ttk, messagebox
 from repo_growth import (
     DETAIL_TARGETS,
     analyse_repo,
+    animated_output_path,
     default_output_path,
+    generate_animated_html,
     generate_html,
 )
 
@@ -92,6 +94,17 @@ def _configure_styles(root):
         foreground=[("disabled", MUTED)],
     )
 
+    style.configure("TCheckbutton",
+        background=BG, foreground=TEXT, font=FONT_BASE,
+        indicatorcolor=SURFACE, indicatorrelief="flat",
+        focuscolor=BG, padding=(0, 2),
+    )
+    style.map("TCheckbutton",
+        background=[("active", BG)],
+        foreground=[("disabled", MUTED)],
+        indicatorcolor=[("selected", ACCENT), ("pressed", ACCENT_DOWN), ("!selected", SURFACE)],
+    )
+
     style.configure("Horizontal.TProgressbar",
         background=ACCENT, troughcolor=SURFACE, bordercolor=SURFACE,
         lightcolor=ACCENT, darkcolor=ACCENT, borderwidth=0, thickness=4,
@@ -111,16 +124,19 @@ def _configure_styles(root):
 def launch_gui():
     root = tk.Tk()
     root.title("Repo Growth")
-    root.geometry("780x680")
-    root.minsize(620, 540)
+    root.geometry("780x560")
+    root.minsize(620, 440)
     root.configure(bg=BG)
 
     _configure_styles(root)
 
-    repo_var   = tk.StringVar()
-    output_var = tk.StringVar(value="")
-    branch_var = tk.StringVar()
-    detail_var = tk.StringVar(value="Standard")
+    repo_var     = tk.StringVar()
+    detail_var   = tk.StringVar(value="Standard")
+    static_var   = tk.BooleanVar(value=True)
+    animated_var = tk.BooleanVar(value=True)
+
+    # Paths to the most recently generated files, used by the two Open buttons.
+    last_output = {"static": "", "animated": ""}
 
     msgs = queue.Queue()
 
@@ -131,21 +147,10 @@ def launch_gui():
         path = filedialog.askdirectory(title="Choose a Git repository")
         if path:
             repo_var.set(path)
-            output_var.set(default_output_path(path))
 
-    def pick_output():
-        path = filedialog.asksaveasfilename(
-            title="Save chart as…",
-            defaultextension=".html",
-            filetypes=[("HTML", "*.html"), ("All files", "*.*")],
-            initialfile="repo_growth.html",
-        )
-        if path:
-            output_var.set(path)
-
-    def open_output():
-        path = output_var.get()
-        if os.path.exists(path):
+    def open_path(key):
+        path = last_output.get(key, "")
+        if path and os.path.exists(path):
             webbrowser.open(f"file:///{os.path.abspath(path).replace(os.sep, '/')}")
 
     def write_log(text):
@@ -159,8 +164,16 @@ def launch_gui():
         if not repo_path or not os.path.isdir(repo_path):
             messagebox.showerror("Repo Growth", "Choose a valid repository folder first.")
             return
-        out    = output_var.get().strip() or default_output_path(repo_path)
-        branch = branch_var.get().strip() or None
+        if not static_var.get() and not animated_var.get():
+            messagebox.showerror(
+                "Repo Growth",
+                "Pick at least one output: Static dashboard or Animated story.",
+            )
+            return
+        out_static   = default_output_path(repo_path)
+        out_animated = animated_output_path(out_static)
+        want_static   = static_var.get()
+        want_animated = animated_var.get()
         target = DETAIL_TARGETS.get(detail_var.get(), 300)
         if not os.path.isdir(os.path.join(repo_path, ".git")):
             if not messagebox.askyesno(
@@ -173,14 +186,21 @@ def launch_gui():
         log_text.delete("1.0", "end")
         log_text.configure(state="disabled")
         run_btn.configure(state="disabled")
-        open_btn.configure(state="disabled")
+        open_static_btn.configure(state="disabled")
+        open_animated_btn.configure(state="disabled")
         progress_bar.start(10)
 
         def worker():
             try:
-                analysis = analyse_repo(repo_path, branch=branch, progress=log, target_points=target)
-                generate_html(analysis, out, progress=log)
-                msgs.put(("done", out))
+                analysis = analyse_repo(repo_path, progress=log, target_points=target)
+                produced = {"static": "", "animated": ""}
+                if want_static:
+                    generate_html(analysis, out_static, progress=log)
+                    produced["static"] = out_static
+                if want_animated:
+                    generate_animated_html(analysis, out_animated, progress=log)
+                    produced["animated"] = out_animated
+                msgs.put(("done", produced))
             except Exception as e:
                 msgs.put(("error", str(e)))
 
@@ -195,8 +215,16 @@ def launch_gui():
                 elif kind == "done":
                     progress_bar.stop()
                     run_btn.configure(state="normal")
-                    open_btn.configure(state="normal")
-                    write_log(f"\nDone — saved to {payload}\n")
+                    last_output["static"]   = payload.get("static", "")
+                    last_output["animated"] = payload.get("animated", "")
+                    open_static_btn.configure(
+                        state=("normal" if last_output["static"] else "disabled")
+                    )
+                    open_animated_btn.configure(
+                        state=("normal" if last_output["animated"] else "disabled")
+                    )
+                    parts = [p for p in (last_output["static"], last_output["animated"]) if p]
+                    write_log("\nDone — saved to:\n  " + "\n  ".join(parts) + "\n")
                 elif kind == "error":
                     progress_bar.stop()
                     run_btn.configure(state="normal")
@@ -230,24 +258,6 @@ def launch_gui():
         .grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1
 
-    ttk.Label(form, text="Output HTML").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    ttk.Entry(form, textvariable=output_var).grid(row=r, column=1, sticky="ew", pady=(0, 4))
-    ttk.Button(form, text="Save as…", command=pick_output).grid(row=r, column=2, padx=(8, 0), pady=(0, 4))
-    r += 1
-    ttk.Label(
-        form,
-        text="Optional — defaults to  <repo>/Repo Growth/<repo>_growth_<date>.html",
-        style="Subtle.TLabel",
-    ).grid(row=r, column=1, sticky="w", pady=(0, 16))
-    r += 1
-
-    ttk.Label(form, text="Branch").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    ttk.Entry(form, textvariable=branch_var).grid(row=r, column=1, sticky="ew", pady=(0, 4))
-    r += 1
-    ttk.Label(form, text="Optional — defaults to the active branch.", style="Subtle.TLabel") \
-        .grid(row=r, column=1, sticky="w", pady=(0, 16))
-    r += 1
-
     ttk.Label(form, text="Detail level").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
     detail_combo = ttk.Combobox(
         form, textvariable=detail_var,
@@ -259,14 +269,35 @@ def launch_gui():
         form,
         text=f"Target data points  ·  Rough ~{DETAIL_TARGETS['Rough']}  ·  Standard ~{DETAIL_TARGETS['Standard']}  ·  Detailed ~{DETAIL_TARGETS['Detailed']}",
         style="Subtle.TLabel",
+    ).grid(row=r, column=1, sticky="w", pady=(0, 16))
+    r += 1
+
+    ttk.Label(form, text="Outputs").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
+    outputs_frame = ttk.Frame(form)
+    outputs_frame.grid(row=r, column=1, sticky="w", pady=(0, 4))
+    ttk.Checkbutton(outputs_frame, text="Static dashboard", variable=static_var).pack(side="left", padx=(0, 18))
+    ttk.Checkbutton(outputs_frame, text="Animated story",   variable=animated_var).pack(side="left")
+    r += 1
+    ttk.Label(
+        form,
+        text="Saved to  <repo>/Repo Growth/  with a date-stamped filename.",
+        style="Subtle.TLabel",
     ).grid(row=r, column=1, sticky="w", pady=(0, 22))
 
     actions = ttk.Frame(outer)
     actions.grid(row=3, column=0, sticky="ew", pady=(0, 14))
     run_btn = ttk.Button(actions, text="Generate", style="Accent.TButton", command=run)
     run_btn.pack(side="left")
-    open_btn = ttk.Button(actions, text="Open in browser", command=open_output, state="disabled")
-    open_btn.pack(side="left", padx=(10, 0))
+    open_static_btn = ttk.Button(
+        actions, text="Open Static",
+        command=lambda: open_path("static"), state="disabled",
+    )
+    open_static_btn.pack(side="left", padx=(10, 0))
+    open_animated_btn = ttk.Button(
+        actions, text="Open Animated",
+        command=lambda: open_path("animated"), state="disabled",
+    )
+    open_animated_btn.pack(side="left", padx=(8, 0))
 
     progress_bar = ttk.Progressbar(outer, mode="indeterminate")
     progress_bar.grid(row=4, column=0, sticky="ew", pady=(0, 14))
