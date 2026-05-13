@@ -5,7 +5,7 @@ import queue
 import threading
 import webbrowser
 import tkinter as tk
-from tkinter import filedialog, ttk, messagebox
+from tkinter import filedialog, ttk, messagebox, font as tkfont
 
 from repo_growth import (
     DETAIL_TARGETS,
@@ -27,23 +27,51 @@ ACCENT_DOWN  = "#00b785"
 TEXT         = "#e8eaf0"
 MUTED        = "#5a6070"
 
-FONT_BASE   = ("Segoe UI", 10)
-FONT_SMALL  = ("Segoe UI", 9)
-FONT_LABEL  = ("Segoe UI", 10)
-FONT_BOLD   = ("Segoe UI", 10, "bold")
-FONT_HEADER = ("Segoe UI", 22, "bold")
-FONT_MONO   = ("Consolas", 10)
+# Font preferences. The static HTML template uses Syne (display sans) and
+# JetBrains Mono. We try those first, then fall back through likely-installed
+# Windows alternatives. To get an exact match, install the two Google Fonts
+# locally — the GUI will pick them up automatically.
+SANS_CANDIDATES = ["Syne", "Segoe UI Variable Display", "Segoe UI", "Arial"]
+MONO_CANDIDATES = ["JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"]
 
 
-def _configure_styles(root):
+def _pick_family(root, candidates):
+    available = set(tkfont.families(root))
+    for fam in candidates:
+        if fam in available:
+            return fam
+    return candidates[-1]
+
+
+def _configure_styles(root, sans, mono):
+    fonts = {
+        "base":      (sans, 10),
+        "small":     (sans, 9),
+        "bold":      (sans, 10, "bold"),
+        "header":    (sans, 26, "bold"),
+        "mono":      (mono, 10),
+        "mono_sub":  (mono, 9),
+        "tracked":   (mono, 9, "bold"),     # used for small uppercase section labels
+    }
+
     style = ttk.Style(root)
     style.theme_use("clam")
 
     style.configure("TFrame", background=BG)
 
-    style.configure("TLabel",        background=BG, foreground=TEXT,  font=FONT_LABEL)
-    style.configure("Header.TLabel", background=BG, foreground=TEXT,  font=FONT_HEADER)
-    style.configure("Subtle.TLabel", background=BG, foreground=MUTED, font=FONT_SMALL)
+    style.configure("TLabel",            background=BG, foreground=TEXT,   font=fonts["base"])
+    style.configure("Subtle.TLabel",     background=BG, foreground=MUTED,  font=fonts["small"])
+
+    # Two-tone header: "Repo" in accent green, " Growth" in text colour.
+    style.configure("Title.TLabel",       background=BG, foreground=TEXT,   font=fonts["header"])
+    style.configure("TitleAccent.TLabel", background=BG, foreground=ACCENT, font=fonts["header"])
+
+    # Matches the .chart-title style from template.html — small, uppercase,
+    # mono, tracked, muted. We fake letter-spacing by uppercasing the text.
+    style.configure("Tracked.TLabel",    background=BG, foreground=MUTED,  font=fonts["tracked"])
+
+    # Mono small muted — matches the web subtitle "branch: ... · ... commits".
+    style.configure("MonoSub.TLabel",    background=BG, foreground=MUTED,  font=fonts["mono_sub"])
 
     style.configure("TEntry",
         fieldbackground=SURFACE, foreground=TEXT,
@@ -71,12 +99,12 @@ def _configure_styles(root):
     root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
     root.option_add("*TCombobox*Listbox.selectForeground", "#0d0f14")
     root.option_add("*TCombobox*Listbox.borderWidth", 0)
-    root.option_add("*TCombobox*Listbox.font", FONT_BASE)
+    root.option_add("*TCombobox*Listbox.font", fonts["base"])
 
     style.configure("TButton",
         background=SURFACE, foreground=TEXT,
         bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
-        padding=(14, 7), font=FONT_BASE, borderwidth=1,
+        padding=(14, 7), font=fonts["base"], borderwidth=1,
     )
     style.map("TButton",
         background=[("active", SURFACE_HI), ("pressed", SURFACE_HI), ("disabled", SURFACE)],
@@ -87,7 +115,7 @@ def _configure_styles(root):
     style.configure("Accent.TButton",
         background=ACCENT, foreground="#0d0f14",
         bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
-        padding=(22, 9), font=FONT_BOLD, borderwidth=0,
+        padding=(22, 9), font=fonts["bold"], borderwidth=0,
     )
     style.map("Accent.TButton",
         background=[("active", ACCENT_HOVER), ("pressed", ACCENT_DOWN), ("disabled", BORDER)],
@@ -95,7 +123,7 @@ def _configure_styles(root):
     )
 
     style.configure("TCheckbutton",
-        background=BG, foreground=TEXT, font=FONT_BASE,
+        background=BG, foreground=TEXT, font=fonts["base"],
         indicatorcolor=SURFACE, indicatorrelief="flat",
         focuscolor=BG, padding=(0, 2),
     )
@@ -120,6 +148,8 @@ def _configure_styles(root):
         arrowcolor=[("active", TEXT)],
     )
 
+    return fonts
+
 
 def launch_gui():
     root = tk.Tk()
@@ -128,7 +158,9 @@ def launch_gui():
     root.minsize(620, 440)
     root.configure(bg=BG)
 
-    _configure_styles(root)
+    sans = _pick_family(root, SANS_CANDIDATES)
+    mono = _pick_family(root, MONO_CANDIDATES)
+    fonts = _configure_styles(root, sans, mono)
 
     repo_var     = tk.StringVar()
     detail_var   = tk.StringVar(value="Standard")
@@ -238,27 +270,30 @@ def launch_gui():
     outer.pack(fill="both", expand=True)
     outer.columnconfigure(0, weight=1)
 
-    ttk.Label(outer, text="Repo Growth", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+    title_row = ttk.Frame(outer)
+    title_row.grid(row=0, column=0, sticky="w")
+    ttk.Label(title_row, text="Repo",   style="TitleAccent.TLabel").pack(side="left")
+    ttk.Label(title_row, text=" Growth", style="Title.TLabel").pack(side="left")
     ttk.Label(
         outer,
-        text="Visualise how a Git repository has grown over time. Local repos only — nothing leaves your machine.",
-        style="Subtle.TLabel",
-    ).grid(row=1, column=0, sticky="w", pady=(4, 22))
+        text="visualise how a git repository has grown over time  ·  local repos only",
+        style="MonoSub.TLabel",
+    ).grid(row=1, column=0, sticky="w", pady=(8, 24))
 
     form = ttk.Frame(outer)
     form.grid(row=2, column=0, sticky="ew")
     form.columnconfigure(1, weight=1)
 
     r = 0
-    ttk.Label(form, text="Repository").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
+    ttk.Label(form, text="REPOSITORY", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
     ttk.Entry(form, textvariable=repo_var).grid(row=r, column=1, sticky="ew", pady=(0, 4))
     ttk.Button(form, text="Browse…", command=pick_repo).grid(row=r, column=2, padx=(8, 0), pady=(0, 4))
     r += 1
-    ttk.Label(form, text="The local Git repository you want to chart.", style="Subtle.TLabel") \
+    ttk.Label(form, text="the local git repository you want to chart", style="Subtle.TLabel") \
         .grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1
 
-    ttk.Label(form, text="Detail level").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
+    ttk.Label(form, text="DETAIL LEVEL", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
     detail_combo = ttk.Combobox(
         form, textvariable=detail_var,
         values=list(DETAIL_TARGETS.keys()), state="readonly",
@@ -267,12 +302,12 @@ def launch_gui():
     r += 1
     ttk.Label(
         form,
-        text=f"Target data points  ·  Rough ~{DETAIL_TARGETS['Rough']}  ·  Standard ~{DETAIL_TARGETS['Standard']}  ·  Detailed ~{DETAIL_TARGETS['Detailed']}",
+        text=f"target data points  ·  rough ~{DETAIL_TARGETS['Rough']}  ·  standard ~{DETAIL_TARGETS['Standard']}  ·  detailed ~{DETAIL_TARGETS['Detailed']}",
         style="Subtle.TLabel",
     ).grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1
 
-    ttk.Label(form, text="Outputs").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
+    ttk.Label(form, text="OUTPUTS", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
     outputs_frame = ttk.Frame(form)
     outputs_frame.grid(row=r, column=1, sticky="w", pady=(0, 4))
     ttk.Checkbutton(outputs_frame, text="Static dashboard", variable=static_var).pack(side="left", padx=(0, 18))
@@ -280,7 +315,7 @@ def launch_gui():
     r += 1
     ttk.Label(
         form,
-        text="Saved to  <repo>/Repo Growth/  with a date-stamped filename.",
+        text="saved to  <repo>/Repo Growth/  with a date-stamped filename",
         style="Subtle.TLabel",
     ).grid(row=r, column=1, sticky="w", pady=(0, 22))
 
@@ -310,7 +345,7 @@ def launch_gui():
 
     log_text = tk.Text(
         log_frame,
-        wrap="word", state="disabled", font=FONT_MONO,
+        wrap="word", state="disabled", font=fonts["mono"],
         bg=SURFACE, fg=TEXT, insertbackground=TEXT,
         selectbackground=BORDER, selectforeground=TEXT,
         relief="flat", borderwidth=0,
