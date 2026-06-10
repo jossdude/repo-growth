@@ -242,6 +242,44 @@
     color: var(--muted);
   }
 
+  /* ---------- Autoplay button ---------- */
+  .play-btn {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: var(--accent);
+    color: #0d0f14;
+    border: none;
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 6px 24px rgba(0, 229, 160, 0.3);
+    transition: transform 0.12s ease, background 0.12s ease, opacity 0.3s ease;
+  }
+  .play-btn:hover { transform: translateX(-50%) translateY(-2px); background: #22f0b0; }
+  .play-btn .icon { font-size: 10px; }
+
+  .hero .meta {
+    margin-top: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.5px;
+  }
+
+  /* Numbers tick from 0 → target when the outro scrolls into view. */
+  .outro-stat .v { font-variant-numeric: tabular-nums; }
+
   @media (max-width: 700px) {
     .story { height: 240vh; }
     .chart-head { flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -255,6 +293,7 @@
 <div class="hero">
   <h1><span>{{REPO_NAME}}</span> growth</h1>
   <p class="sub">branch: {{BRANCH}} &nbsp;·&nbsp; {{TOTAL_COMMITS}} commits</p>
+  <p class="meta" id="heroMeta"></p>
   <div class="scroll-cue">scroll to watch it grow ↓</div>
 </div>
 
@@ -309,6 +348,45 @@
   </div>
 </section>
 
+<section class="story" data-chart="churn">
+  <div class="sticky">
+    <div class="chart-head">
+      <div class="chart-title">
+        <small>Chapter 4</small>
+        Churn — Added vs Removed
+      </div>
+      <div class="readout">
+        <div class="readout-date" id="dateChurn">—</div>
+        <div class="readout-value" id="valChurn">—</div>
+      </div>
+    </div>
+    <div class="canvas-frame"><canvas id="churnChart"></canvas></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#00e5a0"></div>added</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff6b6b"></div>removed</div>
+    </div>
+  </div>
+</section>
+
+<section class="story" data-chart="contrib">
+  <div class="sticky">
+    <div class="chart-head">
+      <div class="chart-title">
+        <small>Chapter 5</small>
+        Contributors
+      </div>
+      <div class="readout">
+        <div class="readout-date" id="dateContrib">—</div>
+        <div class="readout-value" id="valContrib">—</div>
+      </div>
+    </div>
+    <div class="canvas-frame"><canvas id="contribChart"></canvas></div>
+    <div class="commit-msg" id="msgContrib"><span class="hash"></span><span class="text"></span></div>
+  </div>
+</section>
+
+<button class="play-btn" id="playBtn"><span class="icon">▶</span><span class="label">play</span></button>
+
 <div class="progress-rail"><div class="progress-fill" id="progressFill"></div></div>
 
 <div class="outro">
@@ -321,6 +399,8 @@
 const RAW   = {{DATA_JSON}};
 const EXTS  = {{TOP_EXTS_JSON}};
 const STATS = {{STATS_JSON}};
+const CHURN = {{CHURN_JSON}};
+const MILESTONES = STATS.milestones || [];
 
 // Same early-empty-commit filter as the static template, with a safety fallback
 // for tiny repos where filtering would leave us with fewer than 2 points.
@@ -330,6 +410,18 @@ const _filtered = _sorted.filter(d => d.lines > _maxLines * 0.02);
 const DATA = _filtered.length >= 2 ? _filtered : _sorted;
 
 const EXT_COLORS = ['#00e5a0','#0090ff','#ff6b6b','#ffd93d','#c77dff','#ff9f43'];
+
+// "other" band = everything outside the top file types, so the stack totals
+// up to the real line count instead of dropping uncommon / non-top types.
+const EXTS_PLUS = [...EXTS, '__other__'];
+const EXT_COLORS_PLUS = [...EXT_COLORS.slice(0, EXTS.length), '#3a4050'];
+const extLabel = e => e === '__other__' ? 'other' : e;
+
+function msFmt(t) {
+  if (t >= 1e6) return (t / 1e6) + 'M';
+  if (t >= 1e3) return (t / 1e3) + 'k';
+  return '' + t;
+}
 
 /* ---------------- Canvas helpers ---------------- */
 
@@ -387,7 +479,7 @@ function progressIndex(n, progress) {
 
 /* ---------------- Line chart ---------------- */
 
-function drawAnimatedLine(canvas, data, valueKey, color, progress) {
+function drawAnimatedLine(canvas, data, valueKey, color, progress, milestones) {
   const { ctx, W, H } = setupCanvas(canvas);
   const PAD = { top: 16, right: 16, bottom: 36, left: 84 };
   const CW = W - PAD.left - PAD.right;
@@ -462,6 +554,32 @@ function drawAnimatedLine(canvas, data, valueKey, color, progress) {
     ctx.shadowBlur = 0;
   }
 
+  // Milestone callouts: a dashed marker + pill flashes in once the leading
+  // edge scrolls past the date the repo crossed a round line count.
+  if (milestones && milestones.length) {
+    const edgeT = times[full] + ((full < n - 1 && frac > 0) ? (times[full+1] - times[full]) * frac : 0);
+    ctx.textAlign = 'center';
+    ctx.font = '10px JetBrains Mono,monospace';
+    milestones.forEach(ms => {
+      const mt = new Date(ms.date).getTime();
+      if (mt < tMin || mt > tMax || mt > edgeT) return;
+      const x = xp(mt);
+      ctx.strokeStyle = '#ffd93d55';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(x, PAD.top); ctx.lineTo(x, PAD.top + CH); ctx.stroke();
+      ctx.setLineDash([]);
+      const label = msFmt(ms.threshold);
+      const w = ctx.measureText(label).width + 12;
+      ctx.fillStyle = '#ffd93d';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x - w/2, PAD.top + 2, w, 16, 4); else ctx.rect(x - w/2, PAD.top + 2, w, 16);
+      ctx.fill();
+      ctx.fillStyle = '#0d0f14';
+      ctx.fillText(label, x, PAD.top + 13);
+    });
+  }
+
   return { edgeValue, edgeIdx };
 }
 
@@ -476,9 +594,18 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
   const n = data.length;
   if (n < 2 || !exts.length) return null;
 
-  // Pre-compute the full-range maxY using totals across all data points so the
-  // y-axis stays put as the chart fills in.
-  const totals = data.map(d => exts.reduce((s, e) => s + ((d.ext_lines && d.ext_lines[e]) || 0), 0));
+  // Resolve per-band values, computing the "__other__" remainder from the
+  // total line count so the stack always sums to the real line total.
+  const real = exts.filter(e => e !== '__other__');
+  const valsAt = d => {
+    let top = 0; const m = {};
+    for (const e of real) { const v = (d.ext_lines && d.ext_lines[e]) || 0; m[e] = v; top += v; }
+    m['__other__'] = Math.max(0, (d.lines || 0) - top);
+    return m;
+  };
+
+  // Pre-compute the full-range maxY so the y-axis stays put as it fills in.
+  const totals = data.map(d => { const m = valsAt(d); return exts.reduce((s, e) => s + m[e], 0); });
   const maxY = Math.max(...totals) * 1.1 || 1;
   const times = data.map(d => new Date(d.date).getTime());
   const tMin = times[0], tMax = times[n-1];
@@ -501,23 +628,19 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
   // Build the partial dataset (up to progress) with an interpolated trailing
   // point so the right edge animates smoothly between commits.
   const { full, frac } = progressIndex(n, progress);
-  const partial = data.slice(0, full + 1).map(d => ({ t: new Date(d.date).getTime(), ext: d.ext_lines || {} }));
+  const partial = data.slice(0, full + 1).map(d => ({ t: new Date(d.date).getTime(), m: valsAt(d) }));
   if (full < n - 1 && frac > 0) {
     const a = data[full], b = data[full + 1];
     const t = new Date(a.date).getTime() + (new Date(b.date).getTime() - new Date(a.date).getTime()) * frac;
-    const ext = {};
-    for (const e of exts) {
-      const av = (a.ext_lines && a.ext_lines[e]) || 0;
-      const bv = (b.ext_lines && b.ext_lines[e]) || 0;
-      ext[e] = av + (bv - av) * frac;
-    }
-    partial.push({ t, ext });
+    const ma = valsAt(a), mb = valsAt(b), m = {};
+    for (const e of exts) m[e] = ma[e] + (mb[e] - ma[e]) * frac;
+    partial.push({ t, m });
   }
-  if (partial.length < 2) return { edgeIdx: full, edgeTotal: 0 };
+  if (partial.length < 2) return { edgeIdx: full, edgeTotal: 0, edgeExt: partial.length ? partial[0].m : {} };
 
   const stacks = partial.map(p => {
     let cum = 0;
-    return exts.map(e => { cum += p.ext[e] || 0; return cum; });
+    return exts.map(e => { cum += p.m[e] || 0; return cum; });
   });
 
   // Draw bands top-to-bottom for correct overdraw order.
@@ -544,7 +667,68 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
   }
 
   const edgeTotal = stacks[stacks.length-1][exts.length-1];
-  return { edgeIdx: full, edgeTotal, edgeExt: partial[partial.length-1].ext };
+  return { edgeIdx: full, edgeTotal, edgeExt: partial[partial.length-1].m };
+}
+
+/* ---------------- Churn chart ---------------- */
+
+function drawAnimatedChurn(canvas, churn, progress) {
+  const { ctx, W, H } = setupCanvas(canvas);
+  const PAD = { top: 16, right: 16, bottom: 36, left: 84 };
+  const CW = W - PAD.left - PAD.right;
+  const CH = H - PAD.top - PAD.bottom;
+  if (CW <= 0 || CH <= 0) return null;
+  const n = churn.length;
+  if (!n) return null;
+
+  // Cap the y-axis when one bulk commit would dwarf the rest (same rule as the
+  // static dashboard): cap = 5x the 95th percentile, only when it's exceeded.
+  const _all = churn.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a, b) => a - b);
+  const _p95 = _all.length ? _all[Math.min(_all.length - 1, Math.floor(_all.length * 0.95))] : 0;
+  const rawMax = Math.max(...churn.map(c => Math.max(c.added, c.removed))) || 1;
+  const cap = _p95 * 5;
+  const maxY = (cap > 0 && rawMax > cap) ? cap : rawMax * 1.1;
+
+  drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
+
+  const times = churn.map(c => new Date(c.date).getTime());
+  const tMin = times[0], tMax = times[n-1];
+  ctx.fillStyle = '#5a6070';
+  ctx.textAlign = 'center';
+  ctx.font = '11px JetBrains Mono,monospace';
+  for (let i = 0; i <= 6; i++) {
+    const t = tMin + (tMax - tMin) * (i / 6);
+    const x = PAD.left + (i / 6) * CW;
+    const dt = new Date(t);
+    ctx.fillText(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`, x, H - PAD.bottom + 18);
+  }
+
+  const slotW = CW / n;
+  const barW = Math.max(1, slotW * 0.35);
+  const revealCount = Math.max(0, Math.min(1, progress)) * n;
+
+  function drawBar(x, value, fill, alpha) {
+    const h = Math.min((value / maxY) * CH, CH);
+    if (h <= 0) return;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, PAD.top + CH - h, barW, h, 1); else ctx.rect(x, PAD.top + CH - h, barW, h);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  let edge = { idx: 0, added: 0, removed: 0 };
+  churn.forEach((c, i) => {
+    if (i >= revealCount) return;
+    const alpha = Math.max(0.15, Math.min(1, revealCount - i));  // fade the leading bar in
+    const cx = PAD.left + (i + 0.5) * slotW;
+    drawBar(cx - barW - 1, c.added,   '#00e5a0aa', alpha);
+    drawBar(cx + 1,         c.removed, '#ff6b6baa', alpha);
+    edge = { idx: i, added: c.added, removed: c.removed, date: c.date };
+  });
+
+  return edge;
 }
 
 /* ---------------- Scroll → progress wiring ---------------- */
@@ -565,19 +749,25 @@ function sectionProgress(section) {
 }
 
 const sections = {
-  lines: document.querySelector('[data-chart="lines"]'),
-  files: document.querySelector('[data-chart="files"]'),
-  exts:  document.querySelector('[data-chart="exts"]'),
+  lines:   document.querySelector('[data-chart="lines"]'),
+  files:   document.querySelector('[data-chart="files"]'),
+  exts:    document.querySelector('[data-chart="exts"]'),
+  churn:   document.querySelector('[data-chart="churn"]'),
+  contrib: document.querySelector('[data-chart="contrib"]'),
 };
 const canvases = {
-  lines: document.getElementById('linesChart'),
-  files: document.getElementById('filesChart'),
-  exts:  document.getElementById('extsChart'),
+  lines:   document.getElementById('linesChart'),
+  files:   document.getElementById('filesChart'),
+  exts:    document.getElementById('extsChart'),
+  churn:   document.getElementById('churnChart'),
+  contrib: document.getElementById('contribChart'),
 };
 const readouts = {
-  lines: { date: document.getElementById('dateLines'), val: document.getElementById('valLines'), msg: document.getElementById('msgLines') },
-  files: { date: document.getElementById('dateFiles'), val: document.getElementById('valFiles'), msg: document.getElementById('msgFiles') },
-  exts:  { date: document.getElementById('dateExts'),  val: document.getElementById('valExts') },
+  lines:   { date: document.getElementById('dateLines'),   val: document.getElementById('valLines'),   msg: document.getElementById('msgLines') },
+  files:   { date: document.getElementById('dateFiles'),   val: document.getElementById('valFiles'),   msg: document.getElementById('msgFiles') },
+  exts:    { date: document.getElementById('dateExts'),    val: document.getElementById('valExts') },
+  churn:   { date: document.getElementById('dateChurn'),   val: document.getElementById('valChurn') },
+  contrib: { date: document.getElementById('dateContrib'), val: document.getElementById('valContrib'), msg: document.getElementById('msgContrib') },
 };
 
 function updateLineReadout(key, edgeIdx, edgeValue, suffix) {
@@ -590,12 +780,22 @@ function updateLineReadout(key, edgeIdx, edgeValue, suffix) {
   msg.querySelector('.text').textContent = d.message || '';
 }
 
+let _legendBuilt = false;
 function renderLegend(extInfo) {
   const el = document.getElementById('extsLegend');
-  el.innerHTML = '';
-  EXTS.forEach((ext, i) => {
+  if (!_legendBuilt) {
+    el.innerHTML = '';
+    EXTS_PLUS.forEach((ext, i) => {
+      const item = document.createElement('div');
+      item.className = 'legend-item';
+      item.innerHTML = `<div class="legend-dot" style="background:${EXT_COLORS_PLUS[i]}"></div><span class="lbl"></span>`;
+      el.appendChild(item);
+    });
+    _legendBuilt = true;
+  }
+  EXTS_PLUS.forEach((ext, i) => {
     const v = extInfo ? Math.round(extInfo[ext] || 0) : 0;
-    el.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${EXT_COLORS[i]}"></div>${ext} (${v.toLocaleString()})</div>`;
+    el.children[i].querySelector('.lbl').textContent = `${extLabel(ext)} (${v.toLocaleString()})`;
   });
 }
 
@@ -604,9 +804,11 @@ function renderLegend(extInfo) {
    Without this, a single mouse-wheel notch on a long repo skips many commits
    at once and the chart looks like it teleports. */
 const progressState = {
-  lines: { current: 0, target: 0 },
-  files: { current: 0, target: 0 },
-  exts:  { current: 0, target: 0 },
+  lines:   { current: 0, target: 0 },
+  files:   { current: 0, target: 0 },
+  exts:    { current: 0, target: 0 },
+  churn:   { current: 0, target: 0 },
+  contrib: { current: 0, target: 0 },
 };
 let railCurrent = 0, railTarget = 0;
 
@@ -614,9 +816,11 @@ const SMOOTHING = 0.14;   // fraction of the gap closed per frame (~60fps)
 const SETTLE_EPS = 0.0005;
 
 function readTargets() {
-  progressState.lines.target = sectionProgress(sections.lines);
-  progressState.files.target = sectionProgress(sections.files);
-  progressState.exts.target  = sectionProgress(sections.exts);
+  progressState.lines.target   = sectionProgress(sections.lines);
+  progressState.files.target   = sectionProgress(sections.files);
+  progressState.exts.target    = sectionProgress(sections.exts);
+  progressState.churn.target   = sectionProgress(sections.churn);
+  progressState.contrib.target = sectionProgress(sections.contrib);
   const docH = document.documentElement.scrollHeight - window.innerHeight;
   railTarget = docH > 0 ? Math.max(0, Math.min(1, window.scrollY / docH)) : 0;
 }
@@ -629,13 +833,13 @@ function stepToward(state) {
 }
 
 function redraw() {
-  let res = drawAnimatedLine(canvases.lines, DATA, 'lines', '#00e5a0', progressState.lines.current);
+  let res = drawAnimatedLine(canvases.lines, DATA, 'lines', '#00e5a0', progressState.lines.current, MILESTONES);
   if (res) updateLineReadout('lines', res.edgeIdx, res.edgeValue, 'lines');
 
   res = drawAnimatedLine(canvases.files, DATA, 'files', '#0090ff', progressState.files.current);
   if (res) updateLineReadout('files', res.edgeIdx, res.edgeValue, 'files');
 
-  res = drawAnimatedStacked(canvases.exts, DATA, EXTS, EXT_COLORS.slice(0, EXTS.length), progressState.exts.current);
+  res = drawAnimatedStacked(canvases.exts, DATA, EXTS_PLUS, EXT_COLORS_PLUS, progressState.exts.current);
   if (res) {
     const d = DATA[res.edgeIdx];
     if (d) {
@@ -645,15 +849,28 @@ function redraw() {
     renderLegend(res.edgeExt);
   }
 
+  res = drawAnimatedChurn(canvases.churn, CHURN, progressState.churn.current);
+  if (res) {
+    readouts.churn.date.textContent = res.date || '';
+    readouts.churn.val.innerHTML =
+      `<span style="color:#00e5a0">+${res.added.toLocaleString()}</span> / ` +
+      `<span style="color:#ff6b6b">−${res.removed.toLocaleString()}</span>`;
+  }
+
+  res = drawAnimatedLine(canvases.contrib, DATA, 'authors', '#c77dff', progressState.contrib.current);
+  if (res) updateLineReadout('contrib', res.edgeIdx, res.edgeValue, Math.round(res.edgeValue) === 1 ? 'contributor' : 'contributors');
+
   document.getElementById('progressFill').style.height = (railCurrent * 100) + '%';
 }
 
 let animating = false;
 function tick() {
   let moving = false;
-  moving = stepToward(progressState.lines) || moving;
-  moving = stepToward(progressState.files) || moving;
-  moving = stepToward(progressState.exts)  || moving;
+  moving = stepToward(progressState.lines)   || moving;
+  moving = stepToward(progressState.files)   || moving;
+  moving = stepToward(progressState.exts)    || moving;
+  moving = stepToward(progressState.churn)   || moving;
+  moving = stepToward(progressState.contrib) || moving;
   const railDiff = railTarget - railCurrent;
   if (Math.abs(railDiff) > SETTLE_EPS) { railCurrent += railDiff * SMOOTHING; moving = true; }
   else { railCurrent = railTarget; }
@@ -685,24 +902,106 @@ function onResize() {
 window.addEventListener('scroll', onScroll, { passive: true });
 window.addEventListener('resize', onResize);
 
-/* ---------------- Outro stats ---------------- */
+/* ---------------- Hero meta (date range + age) ---------------- */
+(function heroMeta() {
+  const el = document.getElementById('heroMeta');
+  if (!el || !STATS.first_date) return;
+  const ageStr = STATS.age_days >= 365 ? (STATS.age_days / 365).toFixed(1) + ' yrs' : STATS.age_days + ' days';
+  el.textContent = `${STATS.first_date} → ${STATS.last_date} · ${ageStr} old`;
+})();
+
+/* ---------------- Outro stats (with count-up) ---------------- */
+const fmtInt = n => Math.round(n).toLocaleString();
 (function renderOutro() {
-  const net = STATS.net_change;
-  const netStr = (net >= 0 ? '+' : '') + net.toLocaleString();
-  const netClass = net >= 0 ? '' : 'neg';
   const rows = [
-    [STATS.lines_now.toLocaleString(), 'Lines now'],
-    [STATS.files_now.toLocaleString(), 'Files now'],
-    [`<span class="${netClass}">${netStr}</span>`, 'Net line change'],
-    [STATS.total_commits.toLocaleString(), 'Total commits'],
-    [STATS.active_weeks + ' weeks', 'Active weeks'],
-    ['+' + STATS.biggest_jump.delta.toLocaleString(), 'Biggest jump'],
+    [STATS.lines_now,              v => fmtInt(v),                            'Lines now',            ''],
+    [STATS.files_now,              v => fmtInt(v),                            'Files now',            ''],
+    [STATS.net_change,             v => (v >= 0 ? '+' : '−') + fmtInt(Math.abs(v)), 'Net line change', STATS.net_change < 0 ? 'neg' : ''],
+    [STATS.peak_lines,             v => fmtInt(v),                            'Peak lines',           ''],
+    [STATS.total_commits,          v => fmtInt(v),                            'Total commits',        ''],
+    [STATS.author_count,           v => fmtInt(v),                            'Contributors',         ''],
+    [STATS.survival_rate,          v => v.toFixed(0) + '%',                   'Code survival',        ''],
+    [STATS.active_weeks,           v => fmtInt(v) + ' wks',                   'Active weeks',         ''],
+    [STATS.biggest_addition.delta, v => '+' + fmtInt(v),                      'Biggest addition',     ''],
+    [STATS.biggest_removal.delta,  v => '−' + fmtInt(v),                      'Biggest cleanup',      'neg'],
+    [STATS.night_owl_pct,          v => v.toFixed(0) + '%',                   'Night owl (10pm–6am)', ''],
+    [null,                         () => STATS.busiest_day,                   'Busiest day',          ''],
   ];
   const el = document.getElementById('outroStats');
-  rows.forEach(([v, l]) => {
-    el.innerHTML += `<div class="outro-stat"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  el.innerHTML = '';
+  rows.forEach(([target, format, label, cls]) => {
+    const card = document.createElement('div');
+    card.className = 'outro-stat';
+    const v = document.createElement('div');
+    v.className = 'v' + (cls ? ' ' + cls : '');
+    if (target == null) {
+      v.textContent = format();
+    } else {
+      v.textContent = format(0);
+      v.dataset.pending = '1';
+      v._target = target;
+      v._format = format;
+    }
+    const l = document.createElement('div');
+    l.className = 'l'; l.textContent = label;
+    card.appendChild(v); card.appendChild(l); el.appendChild(card);
   });
 })();
+
+let _counted = false;
+function runCountUp() {
+  if (_counted) return; _counted = true;
+  const dur = 1000;
+  document.querySelectorAll('#outroStats .v').forEach(v => {
+    if (v.dataset.pending !== '1') return;
+    const target = v._target, format = v._format, start = performance.now();
+    (function step(now) {
+      const p = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      v.textContent = format(target * eased);
+      if (p < 1) requestAnimationFrame(step);
+    })(performance.now());
+  });
+}
+
+const _outro = document.querySelector('.outro');
+if (_outro && 'IntersectionObserver' in window) {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { runCountUp(); io.disconnect(); } });
+  }, { threshold: 0.25 });
+  io.observe(_outro);
+} else {
+  runCountUp();
+}
+
+/* ---------------- Autoplay ---------------- */
+const playBtn = document.getElementById('playBtn');
+let playing = false;
+const PLAY_SECONDS = 32;  // roughly how long a full top-to-bottom playthrough takes
+
+function setPlayLabel() {
+  playBtn.querySelector('.icon').textContent  = playing ? '❚❚' : '▶';
+  playBtn.querySelector('.label').textContent = playing ? 'pause' : 'play';
+}
+function stopPlay() { playing = false; setPlayLabel(); }
+function playStep() {
+  if (!playing) return;
+  const docH = document.documentElement.scrollHeight - window.innerHeight;
+  const next = window.scrollY + Math.max(2, docH / (PLAY_SECONDS * 60));
+  window.scrollTo(0, next);
+  if (window.scrollY >= docH - 1) { stopPlay(); return; }  // reached the end
+  requestAnimationFrame(playStep);
+}
+function startPlay() {
+  const docH = document.documentElement.scrollHeight - window.innerHeight;
+  if (window.scrollY >= docH - 1) window.scrollTo(0, 0);  // restart from the top
+  playing = true; setPlayLabel(); requestAnimationFrame(playStep);
+}
+if (playBtn) playBtn.addEventListener('click', () => (playing ? stopPlay() : startPlay()));
+
+/* Redraw once web fonts load — canvas text otherwise bakes in the fallback
+   font on first paint and never refreshes until the next scroll. */
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(redraw);
 
 /* Render once on load so charts are visible before the first scroll. */
 redraw();

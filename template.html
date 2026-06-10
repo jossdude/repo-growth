@@ -196,6 +196,18 @@
     <canvas id="churnChart"></canvas>
   </div>
   <div class="chart-wrap chart-full">
+    <div class="chart-title">Contributors over Time</div>
+    <canvas id="contribChart"></canvas>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-title">Commits by Day of Week</div>
+    <canvas id="dowChart"></canvas>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-title">Commits by Hour of Day</div>
+    <canvas id="hourChart"></canvas>
+  </div>
+  <div class="chart-wrap chart-full">
     <div class="chart-title">Lines by File Type over Time</div>
     <canvas id="extChart"></canvas>
     <div class="legend" id="extLegend"></div>
@@ -236,15 +248,30 @@ const sg = document.getElementById('statsGrid');
 const net = STATS.net_change;
 const netStr = (net >= 0 ? '+' : '') + net.toLocaleString();
 const netClass = net >= 0 ? '' : 'neg';
+const fmt = n => Number(n || 0).toLocaleString();
+const ageStr = STATS.age_days >= 365 ? (STATS.age_days / 365).toFixed(1) + ' yrs' : STATS.age_days + ' days';
+const largestName = (STATS.largest_file.name || '—').split('/').pop();
 [
-  [STATS.lines_now.toLocaleString(),                    'Lines now',          ''],
-  [STATS.files_now.toLocaleString(),                    'Files now',          ''],
-  [`<span class="${netClass}">${netStr}</span>`,        'Net line change',    ''],
-  [STATS.avg_file_size + ' lines',                      'Avg file size',      'currently'],
-  [STATS.total_commits.toLocaleString(),                'Total commits',      ''],
-  [STATS.active_weeks + ' weeks',                       'Active weeks',       ''],
-  [STATS.most_active_count + ' commits',                'Busiest week',       STATS.most_active_week],
-  ['+' + STATS.biggest_jump.delta.toLocaleString(),     'Biggest jump',       STATS.biggest_jump.date + ' · ' + (STATS.biggest_jump.message||'').slice(0,30)],
+  [fmt(STATS.lines_now),                                 'Lines now',          ''],
+  [fmt(STATS.files_now),                                 'Files now',          ''],
+  [`<span class="${netClass}">${netStr}</span>`,         'Net line change',    ''],
+  [fmt(STATS.peak_lines),                                'Peak lines',         STATS.peak_date],
+  [STATS.avg_file_size + ' lines',                       'Avg file size',      'median ' + fmt(STATS.median_file_size)],
+  [fmt(STATS.largest_file.lines) + ' lines',             'Largest file',       largestName],
+  [STATS.dominant_ext + ' · ' + STATS.dominant_ext_pct + '%', 'Dominant type', 'share of codebase'],
+  [ageStr,                                               'Repo age',           STATS.first_date + ' → ' + STATS.last_date],
+  ['+' + fmt(STATS.growth_per_day) + '/day',             'Avg growth',         'net lines per day'],
+  [STATS.survival_rate + '%',                            'Code survival',      fmt(STATS.total_added) + ' lines written'],
+  [fmt(STATS.total_commits),                             'Total commits',      ''],
+  [fmt(STATS.author_count),                              'Contributors',       'top ' + STATS.top_author_pct + '% · ' + STATS.top_author],
+  [STATS.active_weeks + ' weeks',                        'Active weeks',       STATS.avg_commits_per_active_week + ' commits/wk avg'],
+  [STATS.most_active_count + ' commits',                 'Busiest week',       STATS.most_active_week],
+  [STATS.longest_streak_weeks + ' wks',                  'Longest streak',     'consecutive active weeks'],
+  [STATS.longest_gap_weeks + ' wks',                     'Longest gap',        'quietest stretch'],
+  [STATS.busiest_day,                                    'Busiest day',        STATS.weekend_pct + '% on weekends'],
+  [STATS.night_owl_pct + '%',                            'Night owl',          'commits 10pm–6am'],
+  ['+' + fmt(STATS.biggest_addition.delta),              'Biggest addition',   STATS.biggest_addition.date + ' · ' + (STATS.biggest_addition.message||'').slice(0,30)],
+  [`<span class="neg">−${fmt(STATS.biggest_removal.delta)}</span>`, 'Biggest cleanup', STATS.biggest_removal.date + ' · ' + (STATS.biggest_removal.message||'').slice(0,30)],
 ].forEach(([val, label, sub]) => {
   sg.innerHTML += `<div class="stat">
     <div class="stat-value">${val}</div>
@@ -461,9 +488,24 @@ function drawStackedChart(canvas, data, exts, colors) {
   const n = data.length;
   if (n < 2 || !exts.length) return;
 
+  // Append an "other" band (everything not in the top extensions) so the
+  // stack totals up to the real line count instead of silently dropping
+  // uncommon / non-top file types.
+  const OTHER_COLOR = '#3a4050';
+  const allExts = [...exts, '__other__'];
+  const allColors = [...colors, OTHER_COLOR];
+  const extName = e => e === '__other__' ? 'other' : e;
+  const extVal = (d, e) => {
+    if (e === '__other__') {
+      const top = exts.reduce((s,x) => s + ((d.ext_lines&&d.ext_lines[x])||0), 0);
+      return Math.max(0, (d.lines||0) - top);
+    }
+    return (d.ext_lines&&d.ext_lines[e])||0;
+  };
+
   const stacks = data.map(d => {
     let cum = 0;
-    return exts.map(ext => { cum += (d.ext_lines&&d.ext_lines[ext])||0; return cum; });
+    return allExts.map(ext => { cum += extVal(d, ext); return cum; });
   });
 
   const maxY = Math.max(...stacks.map(s=>s[s.length-1]))*1.1||1;
@@ -473,7 +515,7 @@ function drawStackedChart(canvas, data, exts, colors) {
   drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
   drawXLabels(ctx, n, H, PAD, CW, i => data[i].date.slice(0,7));
 
-  for (let ei = exts.length-1; ei >= 0; ei--) {
+  for (let ei = allExts.length-1; ei >= 0; ei--) {
     const top = stacks.map((s,i) => ({x:xp(i), y:yp(s[ei])}));
     smoothLine(ctx, top);
     if (ei === 0) {
@@ -485,14 +527,14 @@ function drawStackedChart(canvas, data, exts, colors) {
         else { const prev=bot[j-1]; const cpx=(prev.x+p.x)/2; ctx.bezierCurveTo(cpx,prev.y,cpx,p.y,p.x,p.y); }
       });
     }
-    ctx.closePath(); ctx.fillStyle=colors[ei]+'bb'; ctx.fill();
+    ctx.closePath(); ctx.fillStyle=allColors[ei]+'bb'; ctx.fill();
   }
 
   const legendEl = document.getElementById('extLegend');
   legendEl.innerHTML = '';
-  exts.forEach((ext,i) => {
-    const v = (data[data.length-1].ext_lines&&data[data.length-1].ext_lines[ext])||0;
-    legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${colors[i]}"></div>${ext} (${v.toLocaleString()})</div>`;
+  allExts.forEach((ext,i) => {
+    const v = extVal(data[data.length-1], ext);
+    legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${allColors[i]}"></div>${extName(ext)} (${v.toLocaleString()})</div>`;
   });
 
   canvas.onmousemove = e => {
@@ -501,9 +543,9 @@ function drawStackedChart(canvas, data, exts, colors) {
     if (idx<0||idx>=n) { hideTip(); return; }
     const d = data[idx];
     let html = `<div class="t-date">${d.date}</div>`;
-    exts.forEach((ext,i) => {
-      const v=(d.ext_lines&&d.ext_lines[ext])||0;
-      html += `<div style="color:${colors[i]};font-size:11px">${ext}: ${v.toLocaleString()}</div>`;
+    allExts.forEach((ext,i) => {
+      const v=extVal(d, ext);
+      html += `<div style="color:${allColors[i]};font-size:11px">${extName(ext)}: ${v.toLocaleString()}</div>`;
     });
     showTip(e, html);
   };
@@ -517,6 +559,9 @@ function drawAll() {
   drawLineChart(document.getElementById('avgSizeChart'), DATA.map(d=>d.avg_file_size), '#c77dff', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v} lines/file</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`);
   drawBarChart(document.getElementById('freqChart'), Object.keys(FREQ), Object.values(FREQ), '#ffd93d');
   drawChurnChart(document.getElementById('churnChart'), CHURN);
+  drawLineChart(document.getElementById('contribChart'), DATA.map(d=>d.authors||0), '#c77dff', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v.toLocaleString()} contributor${p.v===1?'':'s'}</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`, 260, true);
+  drawBarChart(document.getElementById('dowChart'), ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], STATS.dow_hist || [], '#0090ff');
+  drawBarChart(document.getElementById('hourChart'), Array.from({length:24}, (_,h)=>String(h).padStart(2,'0')), STATS.hour_hist || [], '#00e5a0');
   drawStackedChart(document.getElementById('extChart'), DATA, EXTS, EXT_COLORS.slice(0, EXTS.length));
 }
 
