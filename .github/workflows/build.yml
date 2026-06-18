@@ -34,7 +34,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install pyinstaller gitpython
+        run: pip install -r requirements-dev.txt
 
       - name: Build
         run: pyinstaller repo_growth.spec
