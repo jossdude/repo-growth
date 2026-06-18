@@ -2,8 +2,10 @@
 """
 repo_growth.py — Visualise how a Git repository has grown over time.
 
-Run the script to launch the Tk GUI:
-    python repo_growth.py
+This module is the analysis core (commit traversal, line counts, churn,
+distributions) plus the HTML generators. It has no GUI dependency — launch
+the app with:
+    python main.py
 
 Pick a repository folder, choose a detail level, click Generate. The chart
 is saved inside the repo at <repo>/Repo Growth/<repo>_growth_<date>.html.
@@ -16,6 +18,7 @@ Requirements:
     pip install gitpython
 """
 
+import base64
 import json
 import os
 import re
@@ -464,12 +467,56 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300, prog
     }
 
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+FONTS_DIR = os.path.join(TEMPLATES_DIR, "fonts")
+
+# (family, font-weight range, woff2 filename). These are variable fonts, so one
+# file per family covers every weight the templates use. Bundled under the SIL
+# Open Font License — see templates/fonts/OFL.txt.
+_BUNDLED_FONTS = [
+    ("Syne",           "400 800", "Syne.woff2"),
+    ("JetBrains Mono", "100 800", "JetBrainsMono.woff2"),
+]
+
+_font_faces_cache = None
+
+
+def _font_faces_css():
+    """@font-face rules with each woff2 embedded as a base64 data URI.
+
+    Inlining the fonts keeps every generated page a single self-contained file
+    that renders identically offline — no request to Google Fonts. Computed
+    once and cached. If the font files are missing, returns "" and the page
+    falls back to system sans/monospace.
+    """
+    global _font_faces_cache
+    if _font_faces_cache is not None:
+        return _font_faces_cache
+    rules = []
+    for family, weight, filename in _BUNDLED_FONTS:
+        try:
+            with open(os.path.join(FONTS_DIR, filename), "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+        except OSError:
+            continue
+        rules.append(
+            "@font-face{font-family:'%s';font-style:normal;font-weight:%s;"
+            "font-display:swap;"
+            "src:url(data:font/woff2;base64,%s) format('woff2')}"
+            % (family, weight, b64)
+        )
+    _font_faces_cache = "\n  ".join(rules)
+    return _font_faces_cache
+
+
 def _render_template(template_name, analysis):
-    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), template_name)
+    template_path = os.path.join(TEMPLATES_DIR, template_name)
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
     return (template
+        .replace("{{FONT_FACES}}",    _font_faces_css())
         .replace("{{REPO_NAME}}",     analysis["repo_name"])
         .replace("{{BRANCH}}",        analysis["branch"])
         .replace("{{TOTAL_COMMITS}}", f"{analysis['total_commits']:,}")
@@ -496,7 +543,3 @@ def generate_html(analysis, output_path, progress=print):
 
 def generate_animated_html(analysis, output_path, progress=print):
     _write_html(_render_template("template_animated.html", analysis), output_path, progress)
-
-if __name__ == "__main__":
-    from gui import launch_gui
-    launch_gui()

@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{REPO_NAME}} — Repo Growth (animated)</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+  /* Fonts (Syne, JetBrains Mono) are embedded as base64 at generation time so
+     this page renders identically offline, with no request to Google. */
+  {{FONT_FACES}}
 
   :root {
     --bg: #0d0f14;
