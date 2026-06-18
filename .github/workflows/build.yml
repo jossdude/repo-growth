@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+            asset: RepoGrowth-windows.exe
+          - os: macos-latest
+            label: macos
+            asset: RepoGrowth-macos.zip
+          - os: ubuntu-22.04
+            label: linux
+            asset: RepoGrowth-linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyinstaller gitpython
+
+      - name: Build
+        run: pyinstaller repo_growth.spec
+
+      - name: Package (Windows)
+        if: matrix.label == 'windows'
+        shell: bash
+        run: cp dist/RepoGrowth.exe "${{ matrix.asset }}"
+
+      - name: Package (Linux)
+        if: matrix.label == 'linux'
+        shell: bash
+        run: cp dist/RepoGrowth "${{ matrix.asset }}"
+
+      - name: Package (macOS)
+        if: matrix.label == 'macos'
+        run: ditto -c -k --keepParent dist/RepoGrowth.app "${{ matrix.asset }}"
+
+      - name: Publish to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
