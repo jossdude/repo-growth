@@ -467,7 +467,17 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300, prog
     }
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+def _resource_base():
+    """Directory holding bundled data files (templates/ and its fonts/).
+
+    When frozen by PyInstaller, bundled data lives in the temp extraction dir
+    exposed as sys._MEIPASS. From source that attribute is absent, so we fall
+    back to this file's directory and behave exactly as before.
+    """
+    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+
+
+BASE_DIR = _resource_base()
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(TEMPLATES_DIR, "fonts")
 
