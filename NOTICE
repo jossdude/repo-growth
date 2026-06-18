@@ -1,0 +1,11 @@
+Repo Growth — third-party notices
+
+The MIT License (see LICENSE) covers the Repo Growth source code only.
+
+The fonts bundled under templates/fonts/ are NOT covered by the MIT License.
+They are licensed separately under the SIL Open Font License, Version 1.1:
+
+  - Syne
+  - JetBrains Mono
+
+See templates/fonts/OFL.txt for the full license text.

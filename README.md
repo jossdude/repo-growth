@@ -122,4 +122,4 @@ Both fonts are licensed under the SIL Open Font License 1.1 — see
 ## License
 
 [MIT](LICENSE) © Joss Redfern. The bundled fonts are licensed separately under the
-SIL Open Font License 1.1.
+SIL Open Font License 1.1 — see [NOTICE](NOTICE).
