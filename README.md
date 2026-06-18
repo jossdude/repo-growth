@@ -8,6 +8,18 @@ The **animated story** replays that history as you scroll — chapter by chapter
 
 Works on local clones — including private repos. The analysis runs entirely on your machine, and the generated pages embed their own fonts, so an open chart makes **no network requests** at all. Share or archive a single HTML file that renders identically offline.
 
+## Download
+
+Prefer not to install Python? Grab a ready-to-run build from the [Releases page](../../releases):
+
+- **Windows** — `RepoGrowth-windows.exe`
+- **macOS** — `RepoGrowth-macos.zip` (unzip to get `RepoGrowth.app`; see the note below)
+- **Linux** — `RepoGrowth-linux` (`chmod +x RepoGrowth-linux`, then run it)
+
+These bundle Python and all dependencies, so there's nothing to install — **except Git**, which Repo Growth still calls to read repositories, so it must be installed and on your `PATH`.
+
+> **macOS first launch:** the app is unsigned, so macOS blocks it the first time. Right-click `RepoGrowth.app` → **Open** → **Open**, or run `xattr -dr com.apple.quarantine RepoGrowth.app`. After that it opens normally.
+
 ## Install
 
 ```bash
@@ -44,6 +56,17 @@ The script samples commits evenly across history and always includes the newest 
 
 For each sampled commit, the script walks the tree and counts non-binary lines and file types. Identical file blobs are counted once and cached by content hash, so unchanged files between samples are nearly free — the main speed-up on large repos. Churn between consecutive sampled commits comes from `git diff --numstat`, and a single pass over the full history yields the contributor, day-of-week and hour-of-day distributions. Everything is bundled into a single HTML file with vanilla-canvas charts — no JS dependencies, works offline.
 
+## Build a standalone program
+
+The [Releases](../../releases) builds are produced with [PyInstaller](https://pyinstaller.org). To build one yourself:
+
+```bash
+pip install -r requirements-dev.txt
+pyinstaller repo_growth.spec
+```
+
+The result lands in `dist/` — `RepoGrowth.exe` on Windows, `RepoGrowth` on Linux, `RepoGrowth.app` on macOS. PyInstaller only builds for the OS it runs on, so the GitHub Actions workflow ([`.github/workflows/build.yml`](.github/workflows/build.yml)) builds all three when a `v*` tag is pushed and attaches them to the Release.
+
 ## Project layout
 
 ```
@@ -54,7 +77,10 @@ templates/
   template.html                  static dashboard (HTML + CSS + JS)
   template_animated.html         scroll-driven animated story
   fonts/                         bundled woff2 fonts (embedded at generation time)
+repo_growth.spec                 PyInstaller build recipe (standalone program)
+.github/workflows/build.yml      CI: build + publish binaries on a v* tag
 requirements.txt
+requirements-dev.txt             build/test tooling (PyInstaller, pytest)
 LICENSE
 ```
 
