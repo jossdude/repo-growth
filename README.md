@@ -1,6 +1,9 @@
 # repo-growth
 
 [![Latest release](https://img.shields.io/github/v/release/jossdude/repo-growth?color=00e5a0&label=download)](https://github.com/jossdude/repo-growth/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/jossdude/repo-growth/total?color=00e5a0)](https://github.com/jossdude/repo-growth/releases)
+[![License](https://img.shields.io/github/license/jossdude/repo-growth?color=00e5a0)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-00e5a0)
 
 Visualise how a Git repository has grown over time. Generates self-contained, interactive HTML — your choice of a **static dashboard**, an **animated scroll-through story**, or both.
 
