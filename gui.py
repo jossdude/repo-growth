@@ -11,10 +11,15 @@ from repo_growth import (
     DETAIL_TARGETS,
     analyse_repo,
     animated_output_path,
+    count_commits,
     default_output_path,
     generate_animated_html,
     generate_html,
 )
+
+# Above this many commits, the Full detail level prompts for confirmation
+# because analysing every commit can take minutes on a large history.
+FULL_WARN_THRESHOLD = 2000
 
 
 BG           = "#0d0f14"
@@ -217,6 +222,19 @@ def launch_gui():
             ):
                 return
 
+        # Full analyses every commit; on a large history that can take minutes,
+        # so confirm before starting. (count_commits returns None if it can't
+        # read the repo — in that case just proceed and let the run surface it.)
+        if target == float("inf"):
+            n = count_commits(repo_path)
+            if n is not None and n > FULL_WARN_THRESHOLD:
+                if not messagebox.askyesno(
+                    "Repo Growth",
+                    "Full detail analyses every commit, which may take several "
+                    "minutes on a repository this large. Continue?",
+                ):
+                    return
+
         log_text.configure(state="normal")
         log_text.delete("1.0", "end")
         log_text.configure(state="disabled")
@@ -310,7 +328,7 @@ def launch_gui():
     r += 1
     ttk.Label(
         form,
-        text=f"target data points  ·  rough ~{DETAIL_TARGETS['Rough']}  ·  standard ~{DETAIL_TARGETS['Standard']}  ·  detailed ~{DETAIL_TARGETS['Detailed']}",
+        text=f"target data points  ·  rough ~{DETAIL_TARGETS['Rough']}  ·  standard ~{DETAIL_TARGETS['Standard']}  ·  detailed ~{DETAIL_TARGETS['Detailed']}  ·  full = every commit",
         style="Subtle.TLabel",
     ).grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1

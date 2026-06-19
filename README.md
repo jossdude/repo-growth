@@ -60,6 +60,7 @@ The script samples commits evenly across history and always includes the newest 
 | Rough    | ~100          | Fastest. Coarse line for very large repos.              |
 | Standard | ~300          | Balanced default.                                       |
 | Detailed | ~900          | Near-every-commit on small/medium repos; slow on huge.  |
+| Full     | every commit  | No sampling at all. Slowest; can take minutes on large repos (the GUI warns first). |
 
 ## How it works
 

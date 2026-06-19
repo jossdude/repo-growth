@@ -10,9 +10,9 @@ the app with:
 Pick a repository folder, choose a detail level, click Generate. The chart
 is saved inside the repo at <repo>/Repo Growth/<repo>_growth_<date>.html.
 
-Detail levels (target data points): Rough ~100, Standard ~300, Detailed ~900.
-The newest commit is always included so the right edge of every chart
-reflects current state.
+Detail levels (target data points): Rough ~100, Standard ~300, Detailed ~900,
+Full = every commit (no sampling; slow on large repos). The newest commit is
+always included so the right edge of every chart reflects current state.
 
 Requirements:
     pip install gitpython
@@ -233,7 +233,22 @@ def pick_sample_step(n, target=300):
     return max(1, n // target)
 
 
-DETAIL_TARGETS = {"Rough": 100, "Standard": 300, "Detailed": 900}
+# "Full" has an infinite target so pick_sample_step always returns 1 — every
+# commit is analysed, no sampling, however large the history.
+DETAIL_TARGETS = {"Rough": 100, "Standard": 300, "Detailed": 900, "Full": float("inf")}
+
+
+def count_commits(repo_path):
+    """Commits reachable from HEAD, or None if it can't be read.
+
+    `git rev-list --count HEAD` is a single fast call (no tree walking), so the
+    GUI can use it to decide whether to warn before a Full (every-commit) run
+    on a large repo without noticeably delaying the click.
+    """
+    try:
+        return int(git.Repo(repo_path).git.rev_list("--count", "HEAD"))
+    except Exception:
+        return None
 
 
 def analyse_repo(repo_path, branch=None, progress=print, target_points=300, progress_pct=None):
@@ -290,7 +305,7 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300, prog
     if step > 1:
         progress(f"Sampling every {step} commits -> {len(sampled)} data points (target ~{target_points})")
     else:
-        progress(f"Processing every commit ({total} <= target {target_points})")
+        progress(f"Processing all {total} commits")
 
     # One pass over the full history for author / day / hour distributions —
     # cheap (no tree walk) and gives stats the sampled series can't.
