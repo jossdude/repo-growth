@@ -45,11 +45,23 @@ package (e.g. `sudo apt install python3-tk`).
 python main.py
 ```
 
-The Tk GUI opens. Pick a repository folder, optionally enter a branch, choose a **Detail level**, tick which **Outputs** you want (**Static dashboard** and/or **Animated story**), then click **Generate**. Progress streams to the log panel; **Open Static** / **Open Animated** launch each result when it's done.
+The Tk GUI opens. Pick a repository folder, optionally pick a **Branch** (defaults to whatever's checked out), choose a **Detail level**, tick which **Outputs** you want (**Static dashboard** and/or **Animated story**), then click **Generate**. Progress streams to the log panel; **Cancel** stops a run at the next commit boundary, and **Open Static** / **Open Animated** launch each result when it's done. Your last-used repo and options are remembered between sessions.
 
 Files are saved inside the target repo at `<repo>/Repo Growth/<repo>_growth_<YYYY-MM-DD>.html` (the animated one gets an `_animated` suffix). The folder is created automatically.
 
 > Tip: add `Repo Growth/` to that repo's `.gitignore` to keep generated charts out of version control.
+
+### Command line
+
+Pass a repository path to skip the GUI — handy for scripts and scheduled runs:
+
+```bash
+python main.py path/to/repo                        # both outputs, Standard detail
+python main.py path/to/repo --detail Full --branch main
+python main.py path/to/repo --no-animated --output charts/growth.html
+```
+
+`--detail` accepts `Rough`, `Standard`, `Detailed` or `Full`; `--output` overrides the static HTML path (the animated file sits next to it with an `_animated` suffix).
 
 ## Detail levels
 
@@ -64,7 +76,9 @@ The script samples commits evenly across history and always includes the newest 
 
 ## How it works
 
-For each sampled commit, the script walks the tree and counts non-binary lines and file types. Identical file blobs are counted once and cached by content hash, so unchanged files between samples are nearly free — the main speed-up on large repos. Churn between consecutive sampled commits comes from `git diff --numstat`, and a single pass over the full history yields the contributor, day-of-week and hour-of-day distributions. Everything is bundled into a single HTML file with vanilla-canvas charts — no JS dependencies, works offline.
+For each sampled commit, the script walks the tree and counts non-binary lines and file types. Identical file blobs are counted once and cached by content hash, so unchanged files between samples are nearly free — the main speed-up on large repos. Churn between consecutive sampled commits comes from a single `git diff-tree --numstat --stdin` process fed every pair at once (with rename detection, matching `git diff`), and a single pass over the full history yields the contributor, day-of-week and hour-of-day distributions. Everything is bundled into a single HTML file with vanilla-canvas charts — no JS dependencies, works offline.
+
+If nothing completes for a while, a heartbeat line reports which commit the analysis is stuck on — the usual culprit is git data being downloaded from cloud storage (see Troubleshooting).
 
 ## Build a standalone program
 
@@ -80,7 +94,7 @@ The result lands in `dist/` — `RepoGrowth.exe` on Windows, `RepoGrowth` on Lin
 ## Project layout
 
 ```
-main.py                          entry point — launches the GUI
+main.py                          entry point — GUI by default, headless CLI with args
 gui.py                           Tk GUI; imports the analysis functions
 repo_growth.py                   analysis core + HTML generators (no GUI dependency)
 templates/
@@ -104,6 +118,7 @@ LICENSE
 - **`Error: gitpython is required`** — run `pip install -r requirements.txt`.
 - **"That folder doesn't look like a Git repository"** — point Repo Growth at the root of a clone (the folder containing `.git`), not a subfolder.
 - **Detailed level is slow on a huge repo** — that's expected; it samples near every commit. Use Standard or Rough for very large histories.
+- **The run stalls partway through on a OneDrive/SharePoint-synced repo** — "Files On-Demand" can leave git objects as cloud-only placeholders (commits synced from another machine arrive dehydrated), and every read then waits on a download. Repo Growth counts these before starting and warns you; the durable fix is right-clicking the repo folder and choosing **Always keep on this device**.
 
 ## Limitations
 

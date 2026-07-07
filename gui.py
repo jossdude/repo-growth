@@ -1,5 +1,6 @@
 """Tk GUI for repo_growth — pick a repo, choose detail level, generate."""
 
+import json
 import os
 import queue
 import threading
@@ -9,17 +10,49 @@ from tkinter import filedialog, ttk, messagebox, font as tkfont
 
 from repo_growth import (
     DETAIL_TARGETS,
+    AnalysisCancelled,
     analyse_repo,
     animated_output_path,
+    cloud_placeholder_count,
     count_commits,
     default_output_path,
     generate_animated_html,
     generate_html,
+    list_branches,
 )
 
 # Above this many commits, the Full detail level prompts for confirmation
 # because analysing every commit can take minutes on a large history.
 FULL_WARN_THRESHOLD = 2000
+
+# Branch dropdown entry meaning "whatever the repo has checked out".
+CURRENT_BRANCH = "(current branch)"
+
+
+def _settings_path():
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "RepoGrowth", "settings.json")
+
+
+def _load_settings():
+    """Last-used GUI choices, or {} on first run / unreadable file."""
+    try:
+        with open(_settings_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_settings(data):
+    """Best-effort persist — a failed save must never break a run."""
+    path = _settings_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 BG           = "#0d0f14"
@@ -159,21 +192,27 @@ def _configure_styles(root, sans, mono):
 def launch_gui():
     root = tk.Tk()
     root.title("Repo Growth")
-    root.geometry("780x560")
-    root.minsize(620, 440)
+    root.geometry("780x640")
+    root.minsize(620, 520)
     root.configure(bg=BG)
 
     sans = _pick_family(root, SANS_CANDIDATES)
     mono = _pick_family(root, MONO_CANDIDATES)
     fonts = _configure_styles(root, sans, mono)
 
-    repo_var     = tk.StringVar()
-    detail_var   = tk.StringVar(value="Standard")
-    static_var   = tk.BooleanVar(value=True)
-    animated_var = tk.BooleanVar(value=True)
+    settings = _load_settings()
+    detail = settings.get("detail", "Standard")
+    repo_var     = tk.StringVar(value=settings.get("repo", ""))
+    detail_var   = tk.StringVar(value=detail if detail in DETAIL_TARGETS else "Standard")
+    branch_var   = tk.StringVar(value=CURRENT_BRANCH)
+    static_var   = tk.BooleanVar(value=bool(settings.get("static", True)))
+    animated_var = tk.BooleanVar(value=bool(settings.get("animated", True)))
 
     # Paths to the most recently generated files, used by the two Open buttons.
     last_output = {"static": "", "animated": ""}
+
+    # The running analysis' cancel event, or None when idle.
+    current_run = {"cancel": None}
 
     msgs = queue.Queue()
 
@@ -183,10 +222,19 @@ def launch_gui():
     def report_pct(v):
         msgs.put(("pct", float(v)))
 
+    def refresh_branches(*_):
+        """Fill the branch dropdown for the chosen repo (current branch first)."""
+        path = repo_var.get().strip()
+        branches = list_branches(path) if path and os.path.isdir(path) else []
+        branch_combo.configure(values=[CURRENT_BRANCH] + branches)
+        if branch_var.get() != CURRENT_BRANCH and branch_var.get() not in branches:
+            branch_var.set(CURRENT_BRANCH)
+
     def pick_repo():
         path = filedialog.askdirectory(title="Choose a Git repository")
         if path:
             repo_var.set(path)
+            refresh_branches()
 
     def open_path(key):
         path = last_output.get(key, "")
@@ -235,19 +283,48 @@ def launch_gui():
                 ):
                     return
 
+        # Cloud-only git objects (OneDrive Files On-Demand) each force a
+        # network download when read; the run can stall for a long time.
+        # Warn before starting so the stall isn't a mystery.
+        placeholders = cloud_placeholder_count(repo_path)
+        if placeholders:
+            if not messagebox.askyesno(
+                "Repo Growth",
+                f"{placeholders:,} git object files in this repository are cloud-only "
+                "placeholders (OneDrive/SharePoint Files On-Demand). The analysis may "
+                "pause while each one downloads.\n\n"
+                "Tip: right-click the repository folder and choose \"Always keep on "
+                "this device\" to stop this recurring.\n\nContinue anyway?",
+            ):
+                return
+
+        chosen_branch = branch_var.get().strip()
+        branch = None if chosen_branch in ("", CURRENT_BRANCH) else chosen_branch
+
+        _save_settings({
+            "repo":     repo_path,
+            "detail":   detail_var.get(),
+            "static":   want_static,
+            "animated": want_animated,
+        })
+
         log_text.configure(state="normal")
         log_text.delete("1.0", "end")
         log_text.configure(state="disabled")
         run_btn.configure(state="disabled")
+        cancel_btn.configure(state="normal")
         open_static_btn.configure(state="disabled")
         open_animated_btn.configure(state="disabled")
         progress_bar.configure(value=0)
 
+        cancel_event = threading.Event()
+        current_run["cancel"] = cancel_event
+
         def worker():
             try:
                 analysis = analyse_repo(
-                    repo_path, progress=log, target_points=target,
-                    progress_pct=report_pct,
+                    repo_path, branch=branch, progress=log, target_points=target,
+                    progress_pct=report_pct, cancel_event=cancel_event,
                 )
                 produced = {"static": "", "animated": ""}
                 if want_static:
@@ -257,10 +334,19 @@ def launch_gui():
                     generate_animated_html(analysis, out_animated, progress=log)
                     produced["animated"] = out_animated
                 msgs.put(("done", produced))
+            except AnalysisCancelled:
+                msgs.put(("cancelled", None))
             except Exception as e:
                 msgs.put(("error", str(e)))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def cancel_run():
+        cancel_event = current_run.get("cancel")
+        if cancel_event is not None and not cancel_event.is_set():
+            cancel_event.set()
+            cancel_btn.configure(state="disabled")
+            write_log("Cancelling — waiting for the current step to finish...\n")
 
     def poll():
         try:
@@ -273,6 +359,8 @@ def launch_gui():
                 elif kind == "done":
                     progress_bar.configure(value=100)
                     run_btn.configure(state="normal")
+                    cancel_btn.configure(state="disabled")
+                    current_run["cancel"] = None
                     last_output["static"]   = payload.get("static", "")
                     last_output["animated"] = payload.get("animated", "")
                     open_static_btn.configure(
@@ -283,9 +371,17 @@ def launch_gui():
                     )
                     parts = [p for p in (last_output["static"], last_output["animated"]) if p]
                     write_log("\nDone — saved to:\n  " + "\n  ".join(parts) + "\n")
+                elif kind == "cancelled":
+                    progress_bar.configure(value=0)
+                    run_btn.configure(state="normal")
+                    cancel_btn.configure(state="disabled")
+                    current_run["cancel"] = None
+                    write_log("\nCancelled.\n")
                 elif kind == "error":
                     progress_bar.configure(value=0)
                     run_btn.configure(state="normal")
+                    cancel_btn.configure(state="disabled")
+                    current_run["cancel"] = None
                     write_log(f"\nERROR: {payload}\n")
                     messagebox.showerror("Repo Growth", payload)
         except queue.Empty:
@@ -312,10 +408,23 @@ def launch_gui():
 
     r = 0
     ttk.Label(form, text="REPOSITORY", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    ttk.Entry(form, textvariable=repo_var).grid(row=r, column=1, sticky="ew", pady=(0, 4))
+    repo_entry = ttk.Entry(form, textvariable=repo_var)
+    repo_entry.grid(row=r, column=1, sticky="ew", pady=(0, 4))
+    repo_entry.bind("<FocusOut>", refresh_branches)
     ttk.Button(form, text="Browse…", command=pick_repo).grid(row=r, column=2, padx=(8, 0), pady=(0, 4))
     r += 1
     ttk.Label(form, text="the local git repository you want to chart", style="Subtle.TLabel") \
+        .grid(row=r, column=1, sticky="w", pady=(0, 16))
+    r += 1
+
+    ttk.Label(form, text="BRANCH", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
+    branch_combo = ttk.Combobox(
+        form, textvariable=branch_var,
+        values=[CURRENT_BRANCH], state="readonly",
+    )
+    branch_combo.grid(row=r, column=1, sticky="ew", pady=(0, 4))
+    r += 1
+    ttk.Label(form, text="which branch's history to chart", style="Subtle.TLabel") \
         .grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1
 
@@ -349,6 +458,8 @@ def launch_gui():
     actions.grid(row=3, column=0, sticky="ew", pady=(0, 14))
     run_btn = ttk.Button(actions, text="Generate", style="Accent.TButton", command=run)
     run_btn.pack(side="left")
+    cancel_btn = ttk.Button(actions, text="Cancel", command=cancel_run, state="disabled")
+    cancel_btn.pack(side="left", padx=(10, 0))
     open_static_btn = ttk.Button(
         actions, text="Open Static",
         command=lambda: open_path("static"), state="disabled",
@@ -383,6 +494,7 @@ def launch_gui():
     log_text.grid(row=0, column=0, sticky="nsew")
     log_scroll.grid(row=0, column=1, sticky="ns")
 
+    refresh_branches()  # populate for the restored last-used repo, if any
     poll()
     root.mainloop()
 

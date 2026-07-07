@@ -22,7 +22,10 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
+import threading
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
@@ -45,6 +48,83 @@ DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday",
 
 # Hours considered "after hours" for the night-owl index.
 NIGHT_HOURS = (22, 23, 0, 1, 2, 3, 4, 5)
+
+
+class AnalysisCancelled(Exception):
+    """Raised when analyse_repo's cancel_event is set mid-run."""
+
+
+# How long the analysis may go quiet before the heartbeat says what it is
+# stuck on (seconds).
+HEARTBEAT_SECS = 15
+
+
+class _Heartbeat:
+    """Reports when the analysis has been quiet for a while.
+
+    A single blob read can block for minutes (cloud-placeholder hydration,
+    slow disk) and the loops can't report progress while blocked — so a
+    watchdog thread announces what the analysis is stuck on instead of
+    leaving the progress log frozen with no explanation.
+    """
+
+    def __init__(self, progress, interval=HEARTBEAT_SECS):
+        self._progress = progress
+        self._interval = interval
+        self._label = "starting"
+        self._last = time.monotonic()
+        self._stop = threading.Event()
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def note(self, label):
+        """Record what the analysis is working on right now."""
+        self._label = label
+        self._last = time.monotonic()
+
+    def stop(self):
+        self._stop.set()
+
+    def _watch(self):
+        while not self._stop.wait(self._interval):
+            quiet = time.monotonic() - self._last
+            if quiet >= self._interval:
+                try:
+                    self._progress(
+                        f"  still working on {self._label} ({quiet:.0f}s with no "
+                        "progress) — git data may be downloading from cloud storage"
+                    )
+                except Exception:
+                    pass
+
+
+# Windows flags OneDrive "Files On-Demand" placeholders with this attribute;
+# reading such a file blocks while its content downloads.
+_FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000
+
+
+def cloud_placeholder_count(repo_path):
+    """Number of files under .git/objects that are cloud-only placeholders.
+
+    OneDrive/SharePoint Files On-Demand dehydrates synced files; each git
+    object read then blocks on a network download, and an analysis touching
+    thousands of them can stall for a very long time (seen in practice with a
+    repo synced across machines via SharePoint). Returns 0 on platforms
+    without the attribute or when the path can't be scanned.
+    """
+    objects_dir = os.path.join(repo_path, ".git", "objects")
+    count = 0
+    try:
+        for root, _dirs, files in os.walk(objects_dir):
+            for name in files:
+                try:
+                    st = os.stat(os.path.join(root, name), follow_symlinks=False)
+                except OSError:
+                    continue
+                if getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS:
+                    count += 1
+    except OSError:
+        pass
+    return count
 
 
 def _blob_lines(blob, cache):
@@ -71,7 +151,7 @@ def _blob_lines(blob, cache):
     return lines
 
 
-def count_lines_and_files(commit, cache=None):
+def count_lines_and_files(commit, cache=None, on_error=None):
     if cache is None:
         cache = {}
     total_lines = 0
@@ -88,8 +168,15 @@ def count_lines_and_files(commit, cache=None):
                 ext = os.path.splitext(blob.name)[1].lower()
                 if ext in COMMON_EXTENSIONS:
                     ext_lines[ext] += lines
-    except Exception:
-        pass
+    except Exception as e:
+        # A failed tree walk truncates this data point; tell the caller so
+        # the dip in the chart is explainable instead of invisible.
+        if on_error is not None:
+            try:
+                on_error(f"tree walk failed at {commit.hexsha[:7]} ({e}); "
+                         "line/file counts for this point may be low")
+            except Exception:
+                pass
     return total_lines, total_files, dict(ext_lines)
 
 
@@ -162,20 +249,119 @@ def get_commit_frequency_weekly(all_commits):
     return dict(sorted(weekly.items()))
 
 
-def get_churn(repo, commits, progress=print, on_pair=None):
+def get_churn(repo, commits, progress=print, on_pair=None, cancel_event=None):
     """Lines added/removed between consecutive (possibly sampled) commits.
 
-    Uses `git diff --numstat`, which is much faster than building patches
-    and parsing +/- lines in Python.
+    All pairs are diffed by a single `git diff-tree -r --numstat --stdin`
+    process instead of one `git diff` process per pair — on a Full run over
+    thousands of commits that saves thousands of process launches.
 
-    `on_pair(i, total)` (optional) is called after every diff with the
+    `on_pair(i, total)` (optional) is called after every pair with the
     1-based pair index and the total number of pairs — used by callers that
-    want determinate progress.
+    want determinate progress. Setting `cancel_event` aborts the loop with
+    AnalysisCancelled.
     """
+    if len(commits) < 2:
+        return []
+    try:
+        return _churn_diff_tree(repo, commits, progress, on_pair, cancel_event)
+    except AnalysisCancelled:
+        raise
+    except Exception as e:
+        progress(f"  batched churn failed ({e}); falling back to per-pair diffs")
+        return _churn_per_pair(repo, commits, progress, on_pair, cancel_event)
+
+
+def _churn_entry(curr_commit, added, removed):
+    date_str = datetime.fromtimestamp(curr_commit.committed_date).strftime("%Y-%m-%d")
+    return {"date": date_str, "added": added, "removed": removed}
+
+
+def _report_pair(i, total, progress, on_pair):
+    if on_pair is not None:
+        try: on_pair(i, total)
+        except Exception: pass
+    if i % 50 == 0:
+        progress(f"  churn [{i}/{total}]")
+
+
+def _churn_diff_tree(repo, commits, progress, on_pair, cancel_event):
+    """Diff every consecutive pair with one `git diff-tree --stdin` process.
+
+    Each input line is `<commit> <parent>` (full SHAs — diff-tree ignores
+    abbreviated ones); git echoes the commit id, then numstat lines, in feed
+    order, so blocks map back to pairs positionally.
+    """
+    n = len(commits)
+    total_pairs = n - 1
+    pairs = "".join(f"{commits[i].hexsha} {commits[i - 1].hexsha}\n" for i in range(1, n))
+    proc = subprocess.Popen(
+        # -M: detect renames like porcelain `git diff` does (diff-tree is
+        # plumbing and leaves them off, which would count every renamed file
+        # as a full delete + add).
+        [git.Git.GIT_PYTHON_GIT_EXECUTABLE, "diff-tree", "-r", "-M", "--numstat", "--stdin"],
+        cwd=repo.working_dir or repo.git_dir,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, encoding="utf-8", errors="replace",
+    )
+
+    # Feed stdin from a thread: writing every pair before reading any output
+    # can deadlock once the pipe buffers fill on a long history.
+    def _feed():
+        try:
+            proc.stdin.write(pairs)
+            proc.stdin.close()
+        except OSError:
+            pass
+
+    threading.Thread(target=_feed, daemon=True).start()
+
+    churn = []
+    added = removed = 0
+    pair_no = 0  # 1-based once the first block header arrives
+    header = re.compile(r"^[0-9a-f]{40,64}$")
+    try:
+        for line in proc.stdout:
+            if cancel_event is not None and cancel_event.is_set():
+                proc.kill()
+                raise AnalysisCancelled("analysis cancelled")
+            line = line.rstrip("\n")
+            if header.match(line):
+                if pair_no:
+                    churn.append(_churn_entry(commits[pair_no], added, removed))
+                    _report_pair(pair_no, total_pairs, progress, on_pair)
+                added = removed = 0
+                pair_no += 1
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                a, r = parts[0], parts[1]
+                if a.isdigit():
+                    added += int(a)
+                if r.isdigit():
+                    removed += int(r)
+        if pair_no:
+            churn.append(_churn_entry(commits[pair_no], added, removed))
+            _report_pair(pair_no, total_pairs, progress, on_pair)
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+        proc.wait()
+
+    if len(churn) != total_pairs:
+        raise RuntimeError(f"expected {total_pairs} diff blocks, got {len(churn)}")
+    return churn
+
+
+def _churn_per_pair(repo, commits, progress, on_pair, cancel_event):
+    """One `git diff --numstat` process per pair — slow, but a safe fallback."""
     churn = []
     n = len(commits)
-    total_pairs = max(0, n - 1)
     for i in range(1, n):
+        if cancel_event is not None and cancel_event.is_set():
+            raise AnalysisCancelled("analysis cancelled")
         prev, curr = commits[i - 1], commits[i]
         added = removed = 0
         try:
@@ -190,13 +376,8 @@ def get_churn(repo, commits, progress=print, on_pair=None):
                         removed += int(r)
         except Exception:
             pass
-        date_str = datetime.fromtimestamp(curr.committed_date).strftime("%Y-%m-%d")
-        churn.append({"date": date_str, "added": added, "removed": removed})
-        if on_pair is not None:
-            try: on_pair(i, total_pairs)
-            except Exception: pass
-        if i % 50 == 0:
-            progress(f"  churn [{i}/{n - 1}]")
+        churn.append(_churn_entry(curr, added, removed))
+        _report_pair(i, n - 1, progress, on_pair)
     return churn
 
 
@@ -246,15 +427,67 @@ def count_commits(repo_path):
     on a large repo without noticeably delaying the click.
     """
     try:
-        return int(git.Repo(repo_path).git.rev_list("--count", "HEAD"))
+        with git.Repo(repo_path) as repo:
+            return int(repo.git.rev_list("--count", "HEAD"))
     except Exception:
         return None
 
 
-def analyse_repo(repo_path, branch=None, progress=print, target_points=300, progress_pct=None):
-    # Sampling traverses every blob in every sampled commit; churn just runs
-    # `git diff --numstat` between pairs. Sampling dominates total runtime
-    # on every real-world repo I've measured, so we weight it more heavily.
+def list_branches(repo_path):
+    """Local branch names with the current branch first, or [] if unreadable.
+
+    Lets the GUI offer a branch picker without the user typing ref names.
+    """
+    try:
+        with git.Repo(repo_path) as repo:
+            names = [h.name for h in repo.heads]
+            try:
+                current = repo.active_branch.name
+                if current in names:
+                    names.remove(current)
+                    names.insert(0, current)
+            except (TypeError, ValueError):
+                pass  # detached HEAD — no current branch to float to the top
+            return names
+    except Exception:
+        return []
+
+
+def analyse_repo(repo_path, branch=None, progress=print, target_points=300,
+                 progress_pct=None, cancel_event=None):
+    """Analyse the repo and return the chart-ready dict.
+
+    `cancel_event` (a threading.Event) may be set from another thread to
+    abort; the analysis then raises AnalysisCancelled at the next commit or
+    churn pair boundary.
+    """
+    progress(f"Opening repo at: {repo_path}")
+
+    # OneDrive/SharePoint Files On-Demand can leave git objects as cloud-only
+    # placeholders; every read then blocks on a download and the run can look
+    # frozen. Say so up front — the stall is otherwise invisible.
+    placeholders = cloud_placeholder_count(repo_path)
+    if placeholders:
+        progress(f"warning: {placeholders:,} git object files are cloud-only placeholders "
+                 "(OneDrive Files On-Demand) — the run may pause while they download")
+
+    repo = git.Repo(repo_path)
+    heartbeat = _Heartbeat(progress)
+    try:
+        return _analyse(repo, repo_path, branch, progress, target_points,
+                        progress_pct, cancel_event, heartbeat)
+    finally:
+        heartbeat.stop()
+        # Stop GitPython's persistent cat-file children so .git isn't left
+        # with open handles (blocks OneDrive sync and file deletion on Windows).
+        repo.close()
+
+
+def _analyse(repo, repo_path, branch, progress, target_points, progress_pct,
+             cancel_event, heartbeat):
+    # Sampling traverses every blob in every sampled commit; churn diffs all
+    # pairs in a single git process. Sampling dominates total runtime on
+    # every real-world repo I've measured, so we weight it more heavily.
     SAMPLE_WEIGHT = 0.7
     CHURN_WEIGHT  = 1.0 - SAMPLE_WEIGHT
 
@@ -266,9 +499,11 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300, prog
         except Exception:
             pass
 
+    def _check_cancel():
+        if cancel_event is not None and cancel_event.is_set():
+            raise AnalysisCancelled("analysis cancelled")
+
     _pct(0.0)
-    progress(f"Opening repo at: {repo_path}")
-    repo = git.Repo(repo_path)
 
     if branch is None:
         try:
@@ -336,8 +571,11 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300, prog
     biggest_removal  = {"delta": 0, "date": "", "message": ""}
 
     for idx, commit in enumerate(sampled):
+        _check_cancel()
         date_str = datetime.fromtimestamp(commit.committed_date).strftime("%Y-%m-%d")
-        lines, files, ext_lines = count_lines_and_files(commit, cache)
+        heartbeat.note(f"commit {commit.hexsha[:7]} ({date_str})")
+        lines, files, ext_lines = count_lines_and_files(
+            commit, cache, on_error=lambda msg: progress(f"  warning: {msg}"))
         avg_file_size = round(lines / files, 1) if files > 0 else 0
         msg = commit.message.split("\n")[0][:60]
 
@@ -366,10 +604,15 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300, prog
             progress(f"  [{idx+1}/{len(sampled)}] {pct:.0f}%  {date_str} — {lines:,} lines, {files} files")
 
     progress("Calculating churn...")
-    churn = get_churn(
-        repo, sampled, progress=progress,
-        on_pair=lambda i, n: _pct(SAMPLE_WEIGHT + CHURN_WEIGHT * (i / n)) if n else None,
-    )
+    heartbeat.note("churn")
+
+    def _churn_pair(i, n):
+        heartbeat.note(f"churn pair {i}/{n}")
+        if n:
+            _pct(SAMPLE_WEIGHT + CHURN_WEIGHT * (i / n))
+
+    churn = get_churn(repo, sampled, progress=progress, on_pair=_churn_pair,
+                      cancel_event=cancel_event)
     _pct(1.0)
 
     final_exts = data_points[-1]["ext_lines"] if data_points else {}
@@ -409,7 +652,11 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300, prog
     # signal of write-then-delete vs. steady accretion.
     total_added   = sum(c["added"] for c in churn)
     total_removed = sum(c["removed"] for c in churn)
-    survival_rate = round(100 * lines_now / total_added, 1) if total_added else 0
+    # Everything ever written = what the first sample already had plus lines
+    # added since; without the first term, a repo that keeps its initial code
+    # reports survival above 100%.
+    total_written = first.get("lines", 0) + total_added
+    survival_rate = round(100 * lines_now / total_written, 1) if total_written else 0
 
     # Dominant file type as a share of the codebase.
     dominant_ext, dominant_ext_pct = "—", 0
