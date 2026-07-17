@@ -140,6 +140,16 @@
   }
   canvas { display: block; width: 100%; height: 100%; }
 
+  /* Chapter 3 pairs the share-over-time stack with a donut of the current
+     instant. Below 900px the donut is dropped rather than squeezed — the stack
+     is the one that still reads at a narrow width. */
+  .canvas-frame.split { display: flex; gap: 22px; }
+  .canvas-frame.split .stack-pane { flex: 1; min-width: 0; }
+  .canvas-frame.split .donut-pane { width: 250px; flex: none; }
+  @media (max-width: 900px) {
+    .canvas-frame.split .donut-pane { display: none; }
+  }
+
   .commit-msg {
     margin-top: 12px;
     font-family: 'JetBrains Mono', monospace;
@@ -345,7 +355,10 @@
         <div class="readout-value" id="valExts">—</div>
       </div>
     </div>
-    <div class="canvas-frame"><canvas id="extsChart"></canvas></div>
+    <div class="canvas-frame split">
+      <div class="stack-pane"><canvas id="extsChart"></canvas></div>
+      <div class="donut-pane"><canvas id="extsDonut"></canvas></div>
+    </div>
     <div class="legend" id="extsLegend"></div>
   </div>
 </section>
@@ -437,14 +450,16 @@ function setupCanvas(canvas) {
   return { ctx, W: rect.width, H: rect.height };
 }
 
-function drawGrid(ctx, PAD, CW, CH, minY, maxY, steps) {
+/* `fmt` optionally overrides the axis label format (used by the file-type
+   chapter, whose axis is a 0-100% share rather than a line count). */
+function drawGrid(ctx, PAD, CW, CH, minY, maxY, steps, fmt) {
   for (let i = 0; i <= steps; i++) {
     const v = minY + (maxY - minY) / steps * i;
     const y = PAD.top + CH - ((v - minY) / (maxY - minY)) * CH;
     ctx.strokeStyle = '#1a1e28'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + CW, y); ctx.stroke();
     ctx.fillStyle = '#5a6070'; ctx.font = '11px JetBrains Mono,monospace'; ctx.textAlign = 'right';
-    ctx.fillText(Math.round(v).toLocaleString(), PAD.left - 8, y + 4);
+    ctx.fillText(fmt ? fmt(v) : Math.round(v).toLocaleString(), PAD.left - 8, y + 4);
   }
 }
 
@@ -606,16 +621,17 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
     return m;
   };
 
-  // Pre-compute the full-range maxY so the y-axis stays put as it fills in.
-  const totals = data.map(d => { const m = valsAt(d); return exts.reduce((s, e) => s + m[e], 0); });
-  const maxY = Math.max(...totals) * 1.1 || 1;
   const times = data.map(d => new Date(d.date).getTime());
   const tMin = times[0], tMax = times[n-1];
   const tSpan = (tMax - tMin) || 1;
   const xp = t => PAD.left + ((t - tMin) / tSpan) * CW;
-  const yp = v => PAD.top  + CH - (v / maxY) * CH;
+  // Bands are drawn as a share of each commit's own total, so the stack always
+  // fills the plot and the axis is a fixed 0-100%. That trades away absolute
+  // scale to make composition readable — the real line count lives in the
+  // readout and the legend, which is why both keep absolute values below.
+  const yp = f => PAD.top + CH - f * CH;
 
-  drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
+  drawGrid(ctx, PAD, CW, CH, 0, 1, 4, v => Math.round(v * 100) + '%');
 
   ctx.fillStyle = '#5a6070';
   ctx.textAlign = 'center';
@@ -640,9 +656,13 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
   }
   if (partial.length < 2) return { edgeIdx: full, edgeTotal: 0, edgeExt: partial.length ? partial[0].m : {} };
 
+  // Cumulative *fractions* of each point's total. A commit with no lines at all
+  // would divide by zero, so fall back to 1 and let the bands collapse to the
+  // baseline rather than emitting NaN coordinates.
   const stacks = partial.map(p => {
+    const tot = exts.reduce((s, e) => s + (p.m[e] || 0), 0) || 1;
     let cum = 0;
-    return exts.map(e => { cum += p.m[e] || 0; return cum; });
+    return exts.map(e => { cum += (p.m[e] || 0) / tot; return cum; });
   });
 
   // Draw bands top-to-bottom for correct overdraw order.
@@ -668,8 +688,58 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
     ctx.fill();
   }
 
-  const edgeTotal = stacks[stacks.length-1][exts.length-1];
-  return { edgeIdx: full, edgeTotal, edgeExt: partial[partial.length-1].m };
+  // Summed from the absolute map, not off the top of `stacks` — the stack tops
+  // out at 1.0 now that it's normalised, and the readout wants real lines.
+  const edgeExt = partial[partial.length-1].m;
+  const edgeTotal = exts.reduce((s, e) => s + (edgeExt[e] || 0), 0);
+  return { edgeIdx: full, edgeTotal, edgeExt };
+}
+
+/* ---------------- Donut ---------------- */
+
+/* The composition at a single instant — effectively the right-hand edge of the
+   stacked chart unrolled into a circle. Slices keep EXTS_PLUS order so a type's
+   colour and angular position match where it sits in the stack beside it.
+   `extInfo` is the absolute per-extension map from drawAnimatedStacked. */
+function drawDonut(canvas, extInfo, exts, colors) {
+  const { ctx, W, H } = setupCanvas(canvas);
+  if (W <= 0 || H <= 0) return;
+  const vals = exts.map(e => Math.max(0, (extInfo && extInfo[e]) || 0));
+  const tot = vals.reduce((s, v) => s + v, 0);
+  const rOuter = Math.min(W, H) / 2 - 8;
+  if (rOuter <= 0 || tot <= 0) return;
+  const rInner = rOuter * 0.6;
+  const cx = W / 2, cy = H / 2;
+
+  let a0 = -Math.PI / 2;   // start at 12 o'clock
+  vals.forEach((v, i) => {
+    if (v <= 0) return;
+    const a1 = a0 + (v / tot) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rOuter, a0, a1);
+    ctx.arc(cx, cy, rInner, a1, a0, true);
+    ctx.closePath();
+    ctx.fillStyle = colors[i] + 'cc';
+    ctx.fill();
+    // Surface-coloured hairline: without it, adjacent slices of a similar hue
+    // merge into one wedge, and the sub-1% types vanish entirely.
+    ctx.strokeStyle = '#141720';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    a0 = a1;
+  });
+
+  // The hole earns its keep by naming the dominant type — the single fact the
+  // donut should hand over without the reader consulting the legend.
+  let bi = 0;
+  vals.forEach((v, i) => { if (v > vals[bi]) bi = i; });
+  ctx.textAlign = 'center';
+  ctx.fillStyle = colors[bi];
+  ctx.font = '600 22px Inter,system-ui,sans-serif';
+  ctx.fillText(Math.round((vals[bi] / tot) * 100) + '%', cx, cy - 1);
+  ctx.fillStyle = '#5a6070';
+  ctx.font = '11px JetBrains Mono,monospace';
+  ctx.fillText(extLabel(exts[bi]), cx, cy + 17);
 }
 
 /* ---------------- Churn chart ---------------- */
@@ -761,6 +831,7 @@ const canvases = {
   lines:   document.getElementById('linesChart'),
   files:   document.getElementById('filesChart'),
   exts:    document.getElementById('extsChart'),
+  extsDonut: document.getElementById('extsDonut'),
   churn:   document.getElementById('churnChart'),
   contrib: document.getElementById('contribChart'),
 };
@@ -795,9 +866,13 @@ function renderLegend(extInfo) {
     });
     _legendBuilt = true;
   }
+  // Shares as text as well as counts: the donut can't render a sub-1% type
+  // legibly, so the legend is where those stay readable.
+  const total = EXTS_PLUS.reduce((s, e) => s + ((extInfo && extInfo[e]) || 0), 0);
   EXTS_PLUS.forEach((ext, i) => {
     const v = extInfo ? Math.round(extInfo[ext] || 0) : 0;
-    el.children[i].querySelector('.lbl').textContent = `${extLabel(ext)} (${v.toLocaleString()})`;
+    const pct = total > 0 ? (v / total * 100).toFixed(1) : '0.0';
+    el.children[i].querySelector('.lbl').textContent = `${extLabel(ext)} (${v.toLocaleString()} · ${pct}%)`;
   });
 }
 
@@ -849,6 +924,7 @@ function redraw() {
       readouts.exts.val.textContent  = Math.round(res.edgeTotal).toLocaleString() + ' lines';
     }
     renderLegend(res.edgeExt);
+    drawDonut(canvases.extsDonut, res.edgeExt, EXTS_PLUS, EXT_COLORS_PLUS);
   }
 
   res = drawAnimatedChurn(canvases.churn, CHURN, progressState.churn.current);

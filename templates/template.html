@@ -148,6 +148,12 @@
   }
   .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
+  /* File-type chart pairs the share-over-time stack with a donut of the hovered
+     commit. Both canvases are sized in JS, so the row only handles placement —
+     drawStackedChart drops the donut when the row is too narrow for it. */
+  .ext-row { display: flex; align-items: center; }
+  #extDonut { flex: none; margin-left: 22px; }
+
   .footer {
     margin-top: 16px;
     font-family: 'JetBrains Mono', monospace;
@@ -211,7 +217,10 @@
   </div>
   <div class="chart-wrap chart-full">
     <div class="chart-title">Lines by File Type over Time</div>
-    <canvas id="extChart"></canvas>
+    <div class="ext-row">
+      <canvas id="extChart"></canvas>
+      <canvas id="extDonut"></canvas>
+    </div>
     <div class="legend" id="extLegend"></div>
   </div>
 </div>
@@ -235,6 +244,7 @@ const _filtered = _sorted.filter(d => d.lines > _maxLines * 0.02);
 const DATA = _filtered.length >= 2 ? _filtered : _sorted;
 
 const EXT_COLORS = ['#00e5a0','#0090ff','#ff6b6b','#ffd93d','#c77dff','#ff9f43'];
+const extName = e => e === '__other__' ? 'other' : e;
 
 const tooltip = document.getElementById('tooltip');
 function showTip(e, html) {
@@ -291,14 +301,16 @@ function setupCanvas(canvas, W, H) {
   return ctx;
 }
 
-function drawGrid(ctx, PAD, CW, CH, minY, maxY, steps) {
+/* `fmt` optionally overrides the axis label format (used by the file-type
+   chart, whose axis is a 0-100% share rather than a line count). */
+function drawGrid(ctx, PAD, CW, CH, minY, maxY, steps, fmt) {
   for (let i = 0; i <= steps; i++) {
     const v = minY + (maxY - minY) / steps * i;
     const y = PAD.top + CH - ((v - minY) / (maxY - minY)) * CH;
     ctx.strokeStyle = '#1a1e28'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + CW, y); ctx.stroke();
     ctx.fillStyle = '#5a6070'; ctx.font = '11px JetBrains Mono,monospace'; ctx.textAlign = 'right';
-    ctx.fillText(Math.round(v).toLocaleString(), PAD.left - 8, y + 4);
+    ctx.fillText(fmt ? fmt(v) : Math.round(v).toLocaleString(), PAD.left - 8, y + 4);
   }
 }
 
@@ -482,8 +494,55 @@ function drawChurnChart(canvas, churn) {
   canvas.onmouseleave = hideTip;
 }
 
-function drawStackedChart(canvas, data, exts, colors) {
-  const W = canvas.parentElement.clientWidth - 56, H = 280;
+/* The composition at a single commit — effectively the stacked chart's vertical
+   slice at that date, unrolled into a circle. Slice order matches the stack's
+   band order so colour and angular position line up between the two. */
+function drawDonut(canvas, vals, exts, colors, size) {
+  const ctx = setupCanvas(canvas, size, size);
+  const tot = vals.reduce((s, v) => s + v, 0);
+  const rOuter = size/2 - 8;
+  if (rOuter <= 0 || tot <= 0) return;
+  const rInner = rOuter * 0.6;
+  const cx = size/2, cy = size/2;
+
+  let a0 = -Math.PI/2;   // start at 12 o'clock
+  vals.forEach((v, i) => {
+    if (v <= 0) return;
+    const a1 = a0 + (v/tot) * Math.PI*2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rOuter, a0, a1);
+    ctx.arc(cx, cy, rInner, a1, a0, true);
+    ctx.closePath();
+    ctx.fillStyle = colors[i] + 'bb';
+    ctx.fill();
+    // Surface-coloured hairline: without it, adjacent slices of a similar hue
+    // merge into one wedge and the sub-1% types disappear entirely.
+    ctx.strokeStyle = '#141720';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    a0 = a1;
+  });
+
+  // The hole earns its keep by naming the dominant type.
+  let bi = 0;
+  vals.forEach((v, i) => { if (v > vals[bi]) bi = i; });
+  ctx.textAlign = 'center';
+  ctx.fillStyle = colors[bi];
+  ctx.font = '600 22px Inter,system-ui,sans-serif';
+  ctx.fillText(Math.round(vals[bi]/tot*100) + '%', cx, cy - 1);
+  ctx.fillStyle = '#5a6070';
+  ctx.font = '11px JetBrains Mono,monospace';
+  ctx.fillText(extName(exts[bi]), cx, cy + 17);
+}
+
+function drawStackedChart(canvas, donutCanvas, data, exts, colors) {
+  // The row is already inside .chart-wrap's padding, so unlike the other charts
+  // there's no 56px to subtract here.
+  const rowW = canvas.parentElement.clientWidth;
+  const showDonut = rowW >= 700;   // narrower than this and the stack should have the width
+  const DONUT = showDonut ? 240 : 0, GAP = showDonut ? 22 : 0;
+  donutCanvas.style.display = showDonut ? 'block' : 'none';
+  const W = Math.max(160, rowW - DONUT - GAP), H = 280;
   const ctx = setupCanvas(canvas, W, H);
   const PAD = {top:16, right:16, bottom:44, left:88};
   const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
@@ -496,7 +555,6 @@ function drawStackedChart(canvas, data, exts, colors) {
   const OTHER_COLOR = '#3a4050';
   const allExts = [...exts, '__other__'];
   const allColors = [...colors, OTHER_COLOR];
-  const extName = e => e === '__other__' ? 'other' : e;
   const extVal = (d, e) => {
     if (e === '__other__') {
       const top = exts.reduce((s,x) => s + ((d.ext_lines&&d.ext_lines[x])||0), 0);
@@ -505,16 +563,20 @@ function drawStackedChart(canvas, data, exts, colors) {
     return (d.ext_lines&&d.ext_lines[e])||0;
   };
 
+  // Cumulative *fractions* of each commit's total, so the stack always fills the
+  // plot and the axis is a fixed 0-100%. That trades away absolute scale to make
+  // composition readable — the legend and tooltip keep the real line counts. A
+  // commit with no lines would divide by zero, hence the fallback to 1.
   const stacks = data.map(d => {
+    const tot = allExts.reduce((s, e) => s + extVal(d, e), 0) || 1;
     let cum = 0;
-    return allExts.map(ext => { cum += extVal(d, ext); return cum; });
+    return allExts.map(ext => { cum += extVal(d, ext) / tot; return cum; });
   });
 
-  const maxY = Math.max(...stacks.map(s=>s[s.length-1]))*1.1||1;
   const xp = i => PAD.left + (i/(n-1))*CW;
-  const yp = v => PAD.top + CH - (v/maxY)*CH;
+  const yp = f => PAD.top + CH - f*CH;
 
-  drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
+  drawGrid(ctx, PAD, CW, CH, 0, 1, 4, v => Math.round(v*100) + '%');
   drawXLabels(ctx, n, H, PAD, CW, i => data[i].date.slice(0,7));
 
   for (let ei = allExts.length-1; ei >= 0; ei--) {
@@ -532,18 +594,29 @@ function drawStackedChart(canvas, data, exts, colors) {
     ctx.closePath(); ctx.fillStyle=allColors[ei]+'bb'; ctx.fill();
   }
 
+  // Shares as text as well as counts: the donut can't render a sub-1% type
+  // legibly, so the legend is where those stay readable.
+  const last = data[n-1];
+  const lastTot = allExts.reduce((s, e) => s + extVal(last, e), 0);
   const legendEl = document.getElementById('extLegend');
   legendEl.innerHTML = '';
   allExts.forEach((ext,i) => {
-    const v = extVal(data[data.length-1], ext);
-    legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${allColors[i]}"></div>${extName(ext)} (${v.toLocaleString()})</div>`;
+    const v = extVal(last, ext);
+    const pct = lastTot > 0 ? (v/lastTot*100).toFixed(1) : '0.0';
+    legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${allColors[i]}"></div>${extName(ext)} (${v.toLocaleString()} · ${pct}%)</div>`;
   });
+
+  const donutAt = d => {
+    if (showDonut) drawDonut(donutCanvas, allExts.map(e => extVal(d, e)), allExts, allColors, DONUT);
+  };
+  donutAt(last);
 
   canvas.onmousemove = e => {
     const mx = e.clientX - canvas.getBoundingClientRect().left;
     const idx = Math.round((mx-PAD.left)/CW*(n-1));
     if (idx<0||idx>=n) { hideTip(); return; }
     const d = data[idx];
+    donutAt(d);   // donut follows the cursor — same instant the tooltip describes
     let html = `<div class="t-date">${d.date}</div>`;
     allExts.forEach((ext,i) => {
       const v=extVal(d, ext);
@@ -551,7 +624,7 @@ function drawStackedChart(canvas, data, exts, colors) {
     });
     showTip(e, html);
   };
-  canvas.onmouseleave = hideTip;
+  canvas.onmouseleave = () => { hideTip(); donutAt(last); };
 }
 
 function drawAll() {
@@ -564,7 +637,7 @@ function drawAll() {
   drawLineChart(document.getElementById('contribChart'), DATA.map(d=>d.authors||0), '#c77dff', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v.toLocaleString()} contributor${p.v===1?'':'s'}</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`, 260, true);
   drawBarChart(document.getElementById('dowChart'), ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], STATS.dow_hist || [], '#0090ff');
   drawBarChart(document.getElementById('hourChart'), Array.from({length:24}, (_,h)=>String(h).padStart(2,'0')), STATS.hour_hist || [], '#00e5a0');
-  drawStackedChart(document.getElementById('extChart'), DATA, EXTS, EXT_COLORS.slice(0, EXTS.length));
+  drawStackedChart(document.getElementById('extChart'), document.getElementById('extDonut'), DATA, EXTS, EXT_COLORS.slice(0, EXTS.length));
 }
 
 drawAll();
