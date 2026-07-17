@@ -7,7 +7,7 @@ Run with no arguments to launch the Tk GUI:
 
 Or pass a repository path to run headless (for scripts and scheduled runs):
 
-    python main.py <repo> [--detail LEVEL] [--branch NAME]
+    python main.py <repo> [--detail LEVEL] [--exclude DIRS]
                           [--output PATH] [--no-static] [--no-animated]
 
 Outputs default to <repo>/Repo Growth/ with a date-stamped filename, exactly
@@ -36,8 +36,9 @@ def run_cli(argv):
     parser.add_argument("repo", help="path to the local git repository")
     parser.add_argument("--detail", choices=list(DETAIL_TARGETS), default="Standard",
                         help="sampling detail level (default: Standard)")
-    parser.add_argument("--branch", default=None,
-                        help="branch to chart (default: the checked-out branch)")
+    parser.add_argument("--exclude", default="",
+                        help="comma-separated folder names to leave out of every "
+                             "chart, at any depth (e.g. --exclude tests,fixtures)")
     parser.add_argument("--output", default=None,
                         help="static HTML output path (default: <repo>/Repo Growth/<name>_growth_<date>.html)")
     parser.add_argument("--no-static", action="store_true",
@@ -52,7 +53,7 @@ def run_cli(argv):
         parser.error(f"not a directory: {args.repo}")
 
     out_static = args.output or default_output_path(args.repo)
-    analysis = analyse_repo(args.repo, branch=args.branch,
+    analysis = analyse_repo(args.repo, exclude_dirs=args.exclude,
                             target_points=DETAIL_TARGETS[args.detail])
     if not args.no_static:
         generate_html(analysis, out_static)

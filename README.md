@@ -45,7 +45,7 @@ package (e.g. `sudo apt install python3-tk`).
 python main.py
 ```
 
-The Tk GUI opens. Pick a repository folder, optionally pick a **Branch** (defaults to whatever's checked out), choose a **Detail level**, tick which **Outputs** you want (**Static dashboard** and/or **Animated story**), then click **Generate**. Progress streams to the log panel; **Cancel** stops a run at the next commit boundary, and **Open Static** / **Open Animated** launch each result when it's done. Your last-used repo and options are remembered between sessions.
+The Tk GUI opens. Pick a repository folder, optionally list folders to **Exclude** (comma-separated, matched at any depth — e.g. `tests` to leave test code out of every chart), choose a **Detail level**, tick which **Outputs** you want (**Static dashboard** and/or **Animated story**), then click **Generate**. Progress streams to the log panel; **Cancel** stops a run at the next commit boundary, and **Open Static** / **Open Animated** launch each result when it's done. Your last-used repo and options are remembered between sessions.
 
 Files are saved inside the target repo at `<repo>/Repo Growth/<repo>_growth_<YYYY-MM-DD>.html` (the animated one gets an `_animated` suffix). The folder is created automatically.
 
@@ -57,11 +57,13 @@ Pass a repository path to skip the GUI — handy for scripts and scheduled runs:
 
 ```bash
 python main.py path/to/repo                        # both outputs, Standard detail
-python main.py path/to/repo --detail Full --branch main
+python main.py path/to/repo --detail Full --exclude tests
 python main.py path/to/repo --no-animated --output charts/growth.html
 ```
 
-`--detail` accepts `Rough`, `Standard`, `Detailed` or `Full`; `--output` overrides the static HTML path (the animated file sits next to it with an `_animated` suffix).
+`--detail` accepts `Rough`, `Standard`, `Detailed` or `Full`; `--exclude` takes comma-separated folder names to leave out of every chart, matched at any depth (`--exclude tests,fixtures`); `--output` overrides the static HTML path (the animated file sits next to it with an `_animated` suffix).
+
+Charts always follow **`main`**. Repositories without a `main` branch fall back to whatever is checked out, so older `master` repos still work.
 
 ## Detail levels
 

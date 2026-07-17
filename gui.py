@@ -18,15 +18,11 @@ from repo_growth import (
     default_output_path,
     generate_animated_html,
     generate_html,
-    list_branches,
 )
 
 # Above this many commits, the Full detail level prompts for confirmation
 # because analysing every commit can take minutes on a large history.
 FULL_WARN_THRESHOLD = 2000
-
-# Branch dropdown entry meaning "whatever the repo has checked out".
-CURRENT_BRANCH = "(current branch)"
 
 
 def _settings_path():
@@ -204,7 +200,7 @@ def launch_gui():
     detail = settings.get("detail", "Standard")
     repo_var     = tk.StringVar(value=settings.get("repo", ""))
     detail_var   = tk.StringVar(value=detail if detail in DETAIL_TARGETS else "Standard")
-    branch_var   = tk.StringVar(value=CURRENT_BRANCH)
+    exclude_var  = tk.StringVar(value=settings.get("exclude", ""))
     static_var   = tk.BooleanVar(value=bool(settings.get("static", True)))
     animated_var = tk.BooleanVar(value=bool(settings.get("animated", True)))
 
@@ -222,19 +218,10 @@ def launch_gui():
     def report_pct(v):
         msgs.put(("pct", float(v)))
 
-    def refresh_branches(*_):
-        """Fill the branch dropdown for the chosen repo (current branch first)."""
-        path = repo_var.get().strip()
-        branches = list_branches(path) if path and os.path.isdir(path) else []
-        branch_combo.configure(values=[CURRENT_BRANCH] + branches)
-        if branch_var.get() != CURRENT_BRANCH and branch_var.get() not in branches:
-            branch_var.set(CURRENT_BRANCH)
-
     def pick_repo():
         path = filedialog.askdirectory(title="Choose a Git repository")
         if path:
             repo_var.set(path)
-            refresh_branches()
 
     def open_path(key):
         path = last_output.get(key, "")
@@ -298,14 +285,14 @@ def launch_gui():
             ):
                 return
 
-        chosen_branch = branch_var.get().strip()
-        branch = None if chosen_branch in ("", CURRENT_BRANCH) else chosen_branch
+        exclude = exclude_var.get().strip()
 
         _save_settings({
             "repo":     repo_path,
             "detail":   detail_var.get(),
             "static":   want_static,
             "animated": want_animated,
+            "exclude":  exclude,
         })
 
         log_text.configure(state="normal")
@@ -323,8 +310,9 @@ def launch_gui():
         def worker():
             try:
                 analysis = analyse_repo(
-                    repo_path, branch=branch, progress=log, target_points=target,
+                    repo_path, progress=log, target_points=target,
                     progress_pct=report_pct, cancel_event=cancel_event,
+                    exclude_dirs=exclude,
                 )
                 produced = {"static": "", "animated": ""}
                 if want_static:
@@ -410,21 +398,17 @@ def launch_gui():
     ttk.Label(form, text="REPOSITORY", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
     repo_entry = ttk.Entry(form, textvariable=repo_var)
     repo_entry.grid(row=r, column=1, sticky="ew", pady=(0, 4))
-    repo_entry.bind("<FocusOut>", refresh_branches)
     ttk.Button(form, text="Browse…", command=pick_repo).grid(row=r, column=2, padx=(8, 0), pady=(0, 4))
     r += 1
     ttk.Label(form, text="the local git repository you want to chart", style="Subtle.TLabel") \
         .grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1
 
-    ttk.Label(form, text="BRANCH", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    branch_combo = ttk.Combobox(
-        form, textvariable=branch_var,
-        values=[CURRENT_BRANCH], state="readonly",
-    )
-    branch_combo.grid(row=r, column=1, sticky="ew", pady=(0, 4))
+    ttk.Label(form, text="EXCLUDE FOLDERS", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
+    exclude_entry = ttk.Entry(form, textvariable=exclude_var)
+    exclude_entry.grid(row=r, column=1, sticky="ew", pady=(0, 4))
     r += 1
-    ttk.Label(form, text="which branch's history to chart", style="Subtle.TLabel") \
+    ttk.Label(form, text="comma-separated folder names to leave out, at any depth  ·  e.g. tests, fixtures  ·  blank charts everything", style="Subtle.TLabel") \
         .grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1
 
@@ -494,7 +478,6 @@ def launch_gui():
     log_text.grid(row=0, column=0, sticky="nsew")
     log_scroll.grid(row=0, column=1, sticky="ns")
 
-    refresh_branches()  # populate for the restored last-used repo, if any
     poll()
     root.mainloop()
 

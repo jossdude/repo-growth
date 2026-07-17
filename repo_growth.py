@@ -127,6 +127,48 @@ def cloud_placeholder_count(repo_path):
     return count
 
 
+def normalise_exclude_dirs(names):
+    """Clean a folder list into a frozenset of bare folder names.
+
+    Accepts either an iterable or the raw comma/newline-separated string the
+    GUI and CLI collect, so "tests/, spec" and ["tests", "spec"] mean the same
+    thing.
+    """
+    if not names:
+        return frozenset()
+    if isinstance(names, str):
+        names = re.split(r"[,\n]", names)
+    return frozenset(
+        cleaned for cleaned in (n.strip().strip("/\\").strip() for n in names) if cleaned
+    )
+
+
+def _is_excluded(path, exclude_dirs):
+    """True when any *folder* in `path` is one of `exclude_dirs`.
+
+    Git tree paths are always '/'-separated with the file name last, so
+    dropping the last component means a file named "tests" survives while
+    anything inside a folder named "tests" — at any depth — doesn't.
+    """
+    if not exclude_dirs:
+        return False
+    return any(part in exclude_dirs for part in path.split("/")[:-1])
+
+
+def _exclude_pathspec(exclude_dirs):
+    """Git pathspec args that drop `exclude_dirs` at any depth, or [] for none.
+
+    Churn is measured by git itself, so it filters via pathspec rather than by
+    matching paths in Python: --numstat renders renames as "dir/{old => new}.py",
+    and re-parsing that back into paths is easy to get subtly wrong. A leading
+    "**/" matches in all directories, root included, so this agrees with
+    _is_excluded.
+    """
+    if not exclude_dirs:
+        return []
+    return ["--"] + [f":(glob,exclude)**/{name}/**" for name in sorted(exclude_dirs)]
+
+
 def _blob_lines(blob, cache):
     """Non-binary line count for a blob, or None if binary/unreadable.
 
@@ -151,7 +193,7 @@ def _blob_lines(blob, cache):
     return lines
 
 
-def count_lines_and_files(commit, cache=None, on_error=None):
+def count_lines_and_files(commit, cache=None, on_error=None, exclude_dirs=()):
     if cache is None:
         cache = {}
     total_lines = 0
@@ -160,6 +202,8 @@ def count_lines_and_files(commit, cache=None, on_error=None):
     try:
         for blob in commit.tree.traverse():
             if blob.type == "blob":
+                if _is_excluded(blob.path, exclude_dirs):
+                    continue
                 total_files += 1
                 lines = _blob_lines(blob, cache)
                 if lines is None:
@@ -180,7 +224,7 @@ def count_lines_and_files(commit, cache=None, on_error=None):
     return total_lines, total_files, dict(ext_lines)
 
 
-def file_sizes_for_commit(commit, cache):
+def file_sizes_for_commit(commit, cache, exclude_dirs=()):
     """[(path, lines), ...] for the non-binary files in a commit's tree.
 
     Used once, on the newest commit, to surface the largest file and the
@@ -190,6 +234,8 @@ def file_sizes_for_commit(commit, cache):
     try:
         for blob in commit.tree.traverse():
             if blob.type == "blob":
+                if _is_excluded(blob.path, exclude_dirs):
+                    continue
                 lines = _blob_lines(blob, cache)
                 if lines is not None:
                     out.append((blob.path, lines))
@@ -249,7 +295,8 @@ def get_commit_frequency_weekly(all_commits):
     return dict(sorted(weekly.items()))
 
 
-def get_churn(repo, commits, progress=print, on_pair=None, cancel_event=None):
+def get_churn(repo, commits, progress=print, on_pair=None, cancel_event=None,
+              exclude_dirs=()):
     """Lines added/removed between consecutive (possibly sampled) commits.
 
     All pairs are diffed by a single `git diff-tree -r --numstat --stdin`
@@ -264,12 +311,14 @@ def get_churn(repo, commits, progress=print, on_pair=None, cancel_event=None):
     if len(commits) < 2:
         return []
     try:
-        return _churn_diff_tree(repo, commits, progress, on_pair, cancel_event)
+        return _churn_diff_tree(repo, commits, progress, on_pair, cancel_event,
+                                exclude_dirs)
     except AnalysisCancelled:
         raise
     except Exception as e:
         progress(f"  batched churn failed ({e}); falling back to per-pair diffs")
-        return _churn_per_pair(repo, commits, progress, on_pair, cancel_event)
+        return _churn_per_pair(repo, commits, progress, on_pair, cancel_event,
+                               exclude_dirs)
 
 
 def _churn_entry(curr_commit, added, removed):
@@ -285,7 +334,7 @@ def _report_pair(i, total, progress, on_pair):
         progress(f"  churn [{i}/{total}]")
 
 
-def _churn_diff_tree(repo, commits, progress, on_pair, cancel_event):
+def _churn_diff_tree(repo, commits, progress, on_pair, cancel_event, exclude_dirs=()):
     """Diff every consecutive pair with one `git diff-tree --stdin` process.
 
     Each input line is `<commit> <parent>` (full SHAs — diff-tree ignores
@@ -299,7 +348,8 @@ def _churn_diff_tree(repo, commits, progress, on_pair, cancel_event):
         # -M: detect renames like porcelain `git diff` does (diff-tree is
         # plumbing and leaves them off, which would count every renamed file
         # as a full delete + add).
-        [git.Git.GIT_PYTHON_GIT_EXECUTABLE, "diff-tree", "-r", "-M", "--numstat", "--stdin"],
+        [git.Git.GIT_PYTHON_GIT_EXECUTABLE, "diff-tree", "-r", "-M", "--numstat", "--stdin"]
+        + _exclude_pathspec(exclude_dirs),
         cwd=repo.working_dir or repo.git_dir,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         text=True, encoding="utf-8", errors="replace",
@@ -355,9 +405,10 @@ def _churn_diff_tree(repo, commits, progress, on_pair, cancel_event):
     return churn
 
 
-def _churn_per_pair(repo, commits, progress, on_pair, cancel_event):
+def _churn_per_pair(repo, commits, progress, on_pair, cancel_event, exclude_dirs=()):
     """One `git diff --numstat` process per pair — slow, but a safe fallback."""
     churn = []
+    pathspec = _exclude_pathspec(exclude_dirs)
     n = len(commits)
     for i in range(1, n):
         if cancel_event is not None and cancel_event.is_set():
@@ -365,7 +416,7 @@ def _churn_per_pair(repo, commits, progress, on_pair, cancel_event):
         prev, curr = commits[i - 1], commits[i]
         added = removed = 0
         try:
-            out = repo.git.diff(prev.hexsha, curr.hexsha, "--numstat")
+            out = repo.git.diff(prev.hexsha, curr.hexsha, "--numstat", *pathspec)
             for line in out.splitlines():
                 parts = line.split("\t")
                 if len(parts) >= 2:
@@ -433,33 +484,39 @@ def count_commits(repo_path):
         return None
 
 
-def list_branches(repo_path):
-    """Local branch names with the current branch first, or [] if unreadable.
+DEFAULT_BRANCH = "main"
 
-    Lets the GUI offer a branch picker without the user typing ref names.
+
+def _resolve_rev(repo):
+    """(rev_to_chart, name_to_display) — always `main` where the repo has it.
+
+    There's deliberately no branch option: Repo Growth charts main, so the
+    result doesn't depend on what happens to be checked out. Repos without a
+    main branch (older ones on master, detached HEAD) still have to produce a
+    chart, so they fall back to the checkout rather than failing.
     """
     try:
-        with git.Repo(repo_path) as repo:
-            names = [h.name for h in repo.heads]
-            try:
-                current = repo.active_branch.name
-                if current in names:
-                    names.remove(current)
-                    names.insert(0, current)
-            except (TypeError, ValueError):
-                pass  # detached HEAD — no current branch to float to the top
-            return names
+        if any(h.name == DEFAULT_BRANCH for h in repo.heads):
+            return DEFAULT_BRANCH, DEFAULT_BRANCH
     except Exception:
-        return []
+        pass  # unreadable refs — fall through to the checked-out branch
+    try:
+        name = repo.active_branch.name
+        return name, name
+    except (TypeError, ValueError):
+        return "HEAD", f"HEAD ({repo.head.commit.hexsha[:7]})"
 
 
-def analyse_repo(repo_path, branch=None, progress=print, target_points=300,
-                 progress_pct=None, cancel_event=None):
+def analyse_repo(repo_path, progress=print, target_points=300,
+                 progress_pct=None, cancel_event=None, exclude_dirs=()):
     """Analyse the repo and return the chart-ready dict.
 
     `cancel_event` (a threading.Event) may be set from another thread to
     abort; the analysis then raises AnalysisCancelled at the next commit or
     churn pair boundary.
+
+    `exclude_dirs` names folders to leave out of every chart (see
+    normalise_exclude_dirs).
     """
     progress(f"Opening repo at: {repo_path}")
 
@@ -471,11 +528,15 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300,
         progress(f"warning: {placeholders:,} git object files are cloud-only placeholders "
                  "(OneDrive Files On-Demand) — the run may pause while they download")
 
+    exclude_dirs = normalise_exclude_dirs(exclude_dirs)
+    if exclude_dirs:
+        progress("Excluding folders: " + ", ".join(sorted(exclude_dirs)))
+
     repo = git.Repo(repo_path)
     heartbeat = _Heartbeat(progress)
     try:
-        return _analyse(repo, repo_path, branch, progress, target_points,
-                        progress_pct, cancel_event, heartbeat)
+        return _analyse(repo, repo_path, progress, target_points,
+                        progress_pct, cancel_event, heartbeat, exclude_dirs)
     finally:
         heartbeat.stop()
         # Stop GitPython's persistent cat-file children so .git isn't left
@@ -483,8 +544,8 @@ def analyse_repo(repo_path, branch=None, progress=print, target_points=300,
         repo.close()
 
 
-def _analyse(repo, repo_path, branch, progress, target_points, progress_pct,
-             cancel_event, heartbeat):
+def _analyse(repo, repo_path, progress, target_points, progress_pct,
+             cancel_event, heartbeat, exclude_dirs):
     # Sampling traverses every blob in every sampled commit; churn diffs all
     # pairs in a single git process. Sampling dominates total runtime on
     # every real-world repo I've measured, so we weight it more heavily.
@@ -505,16 +566,7 @@ def _analyse(repo, repo_path, branch, progress, target_points, progress_pct,
 
     _pct(0.0)
 
-    if branch is None:
-        try:
-            rev = repo.active_branch.name
-            display_branch = rev
-        except (TypeError, ValueError):
-            rev = "HEAD"
-            display_branch = f"HEAD ({repo.head.commit.hexsha[:7]})"
-    else:
-        rev = branch
-        display_branch = branch
+    rev, display_branch = _resolve_rev(repo)
     progress(f"Branch: {display_branch}")
 
     try:
@@ -575,7 +627,8 @@ def _analyse(repo, repo_path, branch, progress, target_points, progress_pct,
         date_str = datetime.fromtimestamp(commit.committed_date).strftime("%Y-%m-%d")
         heartbeat.note(f"commit {commit.hexsha[:7]} ({date_str})")
         lines, files, ext_lines = count_lines_and_files(
-            commit, cache, on_error=lambda msg: progress(f"  warning: {msg}"))
+            commit, cache, on_error=lambda msg: progress(f"  warning: {msg}"),
+            exclude_dirs=exclude_dirs)
         avg_file_size = round(lines / files, 1) if files > 0 else 0
         msg = commit.message.split("\n")[0][:60]
 
@@ -612,7 +665,7 @@ def _analyse(repo, repo_path, branch, progress, target_points, progress_pct,
             _pct(SAMPLE_WEIGHT + CHURN_WEIGHT * (i / n))
 
     churn = get_churn(repo, sampled, progress=progress, on_pair=_churn_pair,
-                      cancel_event=cancel_event)
+                      cancel_event=cancel_event, exclude_dirs=exclude_dirs)
     _pct(1.0)
 
     final_exts = data_points[-1]["ext_lines"] if data_points else {}
@@ -626,7 +679,7 @@ def _analyse(repo, repo_path, branch, progress, target_points, progress_pct,
     largest_file = {"name": "—", "lines": 0}
     median_file_size = 0
     if sampled:
-        file_sizes = file_sizes_for_commit(sampled[-1], cache)
+        file_sizes = file_sizes_for_commit(sampled[-1], cache, exclude_dirs)
         if file_sizes:
             name, flines = max(file_sizes, key=lambda t: t[1])
             largest_file = {"name": name, "lines": flines}
