@@ -744,26 +744,81 @@ function drawDonut(canvas, extInfo, exts, colors) {
 
 /* ---------------- Churn chart ---------------- */
 
+/* Added and removed share one x position but grow in opposite directions from
+   a centre baseline. Side-by-side bars at one pixel per commit were impossible
+   to compare; mirroring frees the full slot width for each series and turns
+   "which way did this commit go" into a glance rather than a pixel measurement. */
+function drawChurnGrid(ctx, PAD, CW, half, zeroY, maxY, stepsPerSide) {
+  for (let i = -stepsPerSide; i <= stepsPerSide; i++) {
+    const v = (maxY / stepsPerSide) * i;
+    const y = zeroY - (v / maxY) * half;
+    const zero = i === 0;
+    ctx.strokeStyle = zero ? '#2b3140' : '#1a1e28'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + CW, y); ctx.stroke();
+    // Tint the tick labels toward their series so the two halves are
+    // self-labelling without a second legend.
+    ctx.fillStyle = zero ? '#5a6070' : (i > 0 ? 'rgba(0,229,160,0.6)' : 'rgba(255,107,107,0.6)');
+    ctx.font = '11px JetBrains Mono,monospace'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(Math.abs(v)).toLocaleString(), PAD.left - 8, y + 4);
+  }
+}
+
+/* Below CHURN_MIN_SLOT px per commit every bar collapses to a hairline and the
+   chart turns into noise. Past that density, adjacent commits are merged into
+   equal buckets whose added/removed are *summed* — a bar then reads as "lines
+   churned over this stretch" rather than per commit, which is what the readout
+   and the per-bar caption below the axis both describe. */
+const CHURN_MIN_SLOT = 5;
+
+function bucketChurn(churn, maxBars) {
+  const n = churn.length;
+  if (n <= maxBars) {
+    return churn.map(c => ({ date: c.date, dateEnd: c.date, added: c.added, removed: c.removed, count: 1 }));
+  }
+  const size = Math.ceil(n / maxBars);
+  const out = [];
+  for (let i = 0; i < n; i += size) {
+    const slice = churn.slice(i, i + size);
+    out.push({
+      date: slice[0].date,
+      dateEnd: slice[slice.length - 1].date,
+      added: slice.reduce((s, c) => s + c.added, 0),
+      removed: slice.reduce((s, c) => s + c.removed, 0),
+      count: slice.length,
+    });
+  }
+  return out;
+}
+
 function drawAnimatedChurn(canvas, churn, progress) {
   const { ctx, W, H } = setupCanvas(canvas);
   const PAD = { top: 16, right: 16, bottom: 36, left: 84 };
   const CW = W - PAD.left - PAD.right;
   const CH = H - PAD.top - PAD.bottom;
   if (CW <= 0 || CH <= 0) return null;
-  const n = churn.length;
-  if (!n) return null;
+  if (!churn.length) return null;
+
+  const series = bucketChurn(churn, Math.max(1, Math.floor(CW / CHURN_MIN_SLOT)));
+  const n = series.length;
+  const bucketed = n < churn.length;
 
   // Cap the y-axis when one bulk commit would dwarf the rest (same rule as the
   // static dashboard): cap = 5x the 95th percentile, only when it's exceeded.
-  const _all = churn.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a, b) => a - b);
+  // Computed on the bucketed series, since that's what actually gets drawn.
+  const _all = series.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a, b) => a - b);
   const _p95 = _all.length ? _all[Math.min(_all.length - 1, Math.floor(_all.length * 0.95))] : 0;
-  const rawMax = Math.max(...churn.map(c => Math.max(c.added, c.removed))) || 1;
+  const rawMax = Math.max(...series.map(c => Math.max(c.added, c.removed))) || 1;
   const cap = _p95 * 5;
   const maxY = (cap > 0 && rawMax > cap) ? cap : rawMax * 1.1;
 
-  drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
+  // Symmetric halves rather than halves scaled to each series' own max: equal
+  // pixels per line above and below is what makes "added vs removed" readable
+  // by height alone.
+  const half = CH / 2;
+  const zeroY = PAD.top + half;
+  drawChurnGrid(ctx, PAD, CW, half, zeroY, maxY, 2);
 
-  const times = churn.map(c => new Date(c.date).getTime());
+  const times = series.map(c => new Date(c.date).getTime());
   const tMin = times[0], tMax = times[n-1];
   ctx.fillStyle = '#5a6070';
   ctx.textAlign = 'center';
@@ -774,29 +829,40 @@ function drawAnimatedChurn(canvas, churn, progress) {
     const dt = new Date(t);
     ctx.fillText(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`, x, H - PAD.bottom + 18);
   }
+  // Say so when bars aren't one-per-commit — the axis numbers mean something
+  // different under bucketing and the reader can't tell by looking.
+  // Sits inside the plot's top-right rather than on the axis row, which is
+  // already occupied end-to-end by the month labels.
+  if (bucketed) {
+    ctx.textAlign = 'right'; ctx.fillStyle = '#3f4756';
+    ctx.fillText(`${series[0].count} commits per bar`, PAD.left + CW, PAD.top + 12);
+  }
 
   const slotW = CW / n;
-  const barW = Math.max(1, slotW * 0.35);
+  const barW = Math.max(1, slotW * 0.7);
   const revealCount = Math.max(0, Math.min(1, progress)) * n;
 
-  function drawBar(x, value, fill, alpha) {
-    const h = Math.min((value / maxY) * CH, CH);
+  function drawBar(cx, value, fill, alpha, dir) {
+    const h = Math.min((value / maxY) * half, half);
     if (h <= 0) return;
+    const x = cx - barW / 2;
+    const y = dir < 0 ? zeroY - h : zeroY;
     ctx.globalAlpha = alpha;
     ctx.fillStyle = fill;
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x, PAD.top + CH - h, barW, h, 1); else ctx.rect(x, PAD.top + CH - h, barW, h);
+    if (ctx.roundRect) ctx.roundRect(x, y, barW, h, dir < 0 ? [1,1,0,0] : [0,0,1,1]);
+    else ctx.rect(x, y, barW, h);
     ctx.fill();
     ctx.globalAlpha = 1;
   }
 
   let edge = { idx: 0, added: 0, removed: 0 };
-  churn.forEach((c, i) => {
+  series.forEach((c, i) => {
     if (i >= revealCount) return;
     const alpha = Math.max(0.15, Math.min(1, revealCount - i));  // fade the leading bar in
     const cx = PAD.left + (i + 0.5) * slotW;
-    drawBar(cx - barW - 1, c.added,   '#00e5a0aa', alpha);
-    drawBar(cx + 1,         c.removed, '#ff6b6baa', alpha);
+    drawBar(cx, c.added,   '#00e5a0aa', alpha, -1);
+    drawBar(cx, c.removed, '#ff6b6baa', alpha,  1);
     edge = { idx: i, added: c.added, removed: c.removed, date: c.date };
   });
 

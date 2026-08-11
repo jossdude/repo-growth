@@ -424,71 +424,141 @@ function drawBarChart(canvas, labels, values, color) {
   canvas.onmouseleave = hideTip;
 }
 
+/* Added and removed share one x position but grow in opposite directions from
+   a centre baseline. Side-by-side bars at one pixel per commit were impossible
+   to compare; mirroring frees the full slot width for each series and turns
+   "which way did this commit go" into a glance rather than a pixel measurement. */
+function drawChurnGrid(ctx, PAD, CW, half, zeroY, maxY, stepsPerSide) {
+  for (let i = -stepsPerSide; i <= stepsPerSide; i++) {
+    const v = (maxY / stepsPerSide) * i;
+    const y = zeroY - (v / maxY) * half;
+    const zero = i === 0;
+    ctx.strokeStyle = zero ? '#2b3140' : '#1a1e28'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + CW, y); ctx.stroke();
+    // Tint the tick labels toward their series so the two halves are
+    // self-labelling without a second legend.
+    ctx.fillStyle = zero ? '#5a6070' : (i > 0 ? 'rgba(0,229,160,0.6)' : 'rgba(255,107,107,0.6)');
+    ctx.font = '11px JetBrains Mono,monospace'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(Math.abs(v)).toLocaleString(), PAD.left - 8, y + 4);
+  }
+}
+
+/* Below MIN_SLOT px per commit every bar collapses to a hairline and the chart
+   turns into noise. Past that density, adjacent commits are merged into equal
+   buckets whose added/removed are *summed* — a bar then reads as "lines churned
+   over this stretch" rather than per commit, which is why the tooltip names the
+   date range and commit count instead of a single date. */
+const CHURN_MIN_SLOT = 5;
+
+function bucketChurn(churn, maxBars) {
+  const n = churn.length;
+  if (n <= maxBars) {
+    return churn.map(c => ({ date: c.date, dateEnd: c.date, added: c.added, removed: c.removed, count: 1 }));
+  }
+  const size = Math.ceil(n / maxBars);
+  const out = [];
+  for (let i = 0; i < n; i += size) {
+    const slice = churn.slice(i, i + size);
+    out.push({
+      date: slice[0].date,
+      dateEnd: slice[slice.length - 1].date,
+      added: slice.reduce((s, c) => s + c.added, 0),
+      removed: slice.reduce((s, c) => s + c.removed, 0),
+      count: slice.length,
+    });
+  }
+  return out;
+}
+
+function churnTipLabel(c) {
+  return c.count > 1
+    ? `<div class="t-date">${c.date} → ${c.dateEnd}</div><div class="t-sub">${c.count} commits</div>`
+    : `<div class="t-date">${c.date}</div>`;
+}
+
 function drawChurnChart(canvas, churn) {
-  const W = canvas.parentElement.clientWidth - 56, H = 260;
+  const W = canvas.parentElement.clientWidth - 56, H = 300;
   const ctx = setupCanvas(canvas, W, H);
   const PAD = {top:16, right:16, bottom:44, left:68};
   const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
-  const n = churn.length;
-  if (!n) return;
+  if (!churn.length) return;
+
+  const series = bucketChurn(churn, Math.max(1, Math.floor(CW / CHURN_MIN_SLOT)));
+  const n = series.length;
+  const bucketed = n < churn.length;
 
   // Cap Y axis when a single bar (typically a bulk-paste commit) would dwarf
   // the rest. Only kicks in for true extreme outliers: cap = 5x the 95th
   // percentile, and clipping only triggers when rawMax exceeds that cap.
-  // Bars above the cap clip at the top with a brighter accent stripe.
-  const _all = churn.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a,b) => a-b);
+  // Bars above the cap clip at the plot edge with a brighter accent stripe.
+  // Computed on the bucketed series, since that's what actually gets drawn.
+  const _all = series.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a,b) => a-b);
   const _p95 = _all.length ? _all[Math.min(_all.length - 1, Math.floor(_all.length * 0.95))] : 0;
-  const rawMax = Math.max(...churn.map(c => Math.max(c.added, c.removed))) || 1;
+  const rawMax = Math.max(...series.map(c => Math.max(c.added, c.removed))) || 1;
   const cap = _p95 * 5;
   const clipping = cap > 0 && rawMax > cap;
   const maxY = clipping ? cap : rawMax * 1.1;
-  drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
+
+  // Symmetric halves rather than halves scaled to each series' own max: equal
+  // pixels per line above and below is what makes "added vs removed" readable
+  // by height alone.
+  const half = CH / 2;
+  const zeroY = PAD.top + half;
+  drawChurnGrid(ctx, PAD, CW, half, zeroY, maxY, 2);
 
   const slotW = CW / n;
-  const barW  = Math.max(1, slotW * 0.35);
+  const barW  = Math.max(1, slotW * 0.7);
   const rects = [];
 
-  function drawBar(x, value, fill, accent) {
-    const raw = (value / maxY) * CH;
-    const h = Math.min(raw, CH);
+  function drawBar(cx, value, fill, accent, dir) {
+    const h = Math.min((value / maxY) * half, half);
     if (h <= 0) return;
+    const x = cx - barW / 2;
+    const y = dir < 0 ? zeroY - h : zeroY;
     ctx.fillStyle = fill;
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x, PAD.top + CH - h, barW, h, 1); else ctx.rect(x, PAD.top + CH - h, barW, h);
+    if (ctx.roundRect) ctx.roundRect(x, y, barW, h, dir < 0 ? [1,1,0,0] : [0,0,1,1]);
+    else ctx.rect(x, y, barW, h);
     ctx.fill();
     if (value > maxY) {
       ctx.fillStyle = accent;
-      ctx.fillRect(x, PAD.top, barW, 2);
+      ctx.fillRect(x, dir < 0 ? PAD.top : PAD.top + CH - 2, barW, 2);
     }
   }
 
-  churn.forEach((c,i) => {
+  series.forEach((c,i) => {
     const cx = PAD.left + (i+0.5)*slotW;
-    drawBar(cx - barW - 1, c.added,   '#00e5a055', '#00e5a0');
-    drawBar(cx + 1,         c.removed, '#ff6b6b55', '#ff6b6b');
+    drawBar(cx, c.added,   '#00e5a055', '#00e5a0', -1);
+    drawBar(cx, c.removed, '#ff6b6b55', '#ff6b6b',  1);
     rects.push({cx, slotW, c, i});
   });
 
   const step = Math.max(1, Math.floor(n/8));
   ctx.fillStyle='#5a6070'; ctx.textAlign='center'; ctx.font='11px JetBrains Mono,monospace';
-  for (let i=0;i<n;i+=step) ctx.fillText(churn[i].date.slice(0,7), PAD.left+(i+0.5)*slotW, H-PAD.bottom+18);
+  for (let i=0;i<n;i+=step) ctx.fillText(series[i].date.slice(0,7), PAD.left+(i+0.5)*slotW, H-PAD.bottom+18);
 
   ctx.fillStyle='#00e5a0'; ctx.fillRect(PAD.left, H-8, 10, 6);
   ctx.fillStyle='#5a6070'; ctx.textAlign='left'; ctx.font='11px JetBrains Mono,monospace';
-  ctx.fillText('added', PAD.left+14, H-3);
-  ctx.fillStyle='#ff6b6b'; ctx.fillRect(PAD.left+80, H-8, 10, 6);
-  ctx.fillStyle='#5a6070'; ctx.fillText('removed', PAD.left+94, H-3);
+  ctx.fillText('added (above)', PAD.left+14, H-3);
+  ctx.fillStyle='#ff6b6b'; ctx.fillRect(PAD.left+120, H-8, 10, 6);
+  ctx.fillStyle='#5a6070'; ctx.fillText('removed (below)', PAD.left+134, H-3);
+  // Say so when bars aren't one-per-commit — the axis numbers mean something
+  // different under bucketing and the reader can't tell by looking.
+  if (bucketed) {
+    ctx.textAlign='right'; ctx.fillStyle='#3f4756';
+    ctx.fillText(`${series[0].count} commits per bar`, PAD.left+CW, H-3);
+  }
 
   canvas.onmousemove = e => {
     const mx = e.clientX - canvas.getBoundingClientRect().left;
     const idx = Math.floor((mx - PAD.left) / slotW);
     if (idx >= 0 && idx < n) {
-      const c = churn[idx];
+      const c = series[idx];
       const clipped = c.added > maxY || c.removed > maxY;
       const note = clipped
         ? `<div class="t-sub">scaled to fit — Y axis capped at ${Math.round(maxY).toLocaleString()}</div>`
         : '';
-      showTip(e, `<div class="t-date">${c.date}</div><div class="t-add">+${c.added.toLocaleString()} added</div><div class="t-rem">−${c.removed.toLocaleString()} removed</div>${note}`);
+      showTip(e, `${churnTipLabel(c)}<div class="t-add">+${c.added.toLocaleString()} added</div><div class="t-rem">−${c.removed.toLocaleString()} removed</div>${note}`);
     } else hideTip();
   };
   canvas.onmouseleave = hideTip;
