@@ -66,6 +66,7 @@ ACCENT_HOVER = "#22f0b0"
 ACCENT_DOWN  = "#00b785"
 TEXT         = "#e8eaf0"
 MUTED        = "#5a6070"
+MARK_AXIS    = "#2a3242"   # the logo's chart axis — sits between BORDER and MUTED
 
 # Greyed-out menu entries. MUTED manages only 2.9:1 against the menu's
 # SURFACE background — dim enough to read as disabled, too dim to read. This
@@ -78,6 +79,44 @@ MENU_DISABLED = "#7b8394"
 # locally — the GUI will pick them up automatically.
 SANS_CANDIDATES = ["Syne", "Segoe UI Variable Display", "Segoe UI", "Arial"]
 MONO_CANDIDATES = ["JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"]
+
+
+# The logo mark, defined on the same 32x32 grid as assets/logo.svg: a
+# lines-of-code curve rising off a muted axis, with each commit as a node and
+# the latest one picked out larger. Tk can't render SVG, so we redraw it on a
+# Canvas from the same coordinates — keep the two in step if either changes.
+_MARK_AXIS_PTS  = [(6, 4.5), (6, 26), (27.5, 26)]
+_MARK_CURVE_PTS = [(9.5, 21.2), (14.8, 16.2), (19.2, 18.4), (25, 9.2)]
+_MARK_NODE_RADII = [2, 2, 2, 3.4]
+
+
+def _make_mark(parent, size=34):
+    """Canvas widget holding the Repo Growth mark, drawn at `size` pixels."""
+    s = size / 32.0
+    canvas = tk.Canvas(
+        parent, width=size, height=size,
+        bg=BG, highlightthickness=0, bd=0,
+    )
+
+    def scaled(points):
+        return [c * s for pt in points for c in pt]
+
+    canvas.create_line(
+        *scaled(_MARK_AXIS_PTS),
+        fill=MARK_AXIS, width=max(1, 2.4 * s),
+        capstyle=tk.ROUND, joinstyle=tk.ROUND,
+    )
+    canvas.create_line(
+        *scaled(_MARK_CURVE_PTS),
+        fill=ACCENT, width=max(1, 3 * s),
+        capstyle=tk.ROUND, joinstyle=tk.ROUND,
+    )
+    for (x, y), r in zip(_MARK_CURVE_PTS, _MARK_NODE_RADII):
+        canvas.create_oval(
+            (x - r) * s, (y - r) * s, (x + r) * s, (y + r) * s,
+            fill=ACCENT, outline="",
+        )
+    return canvas
 
 
 def _pick_family(root, candidates):
@@ -626,6 +665,7 @@ def launch_gui():
 
     title_row = ttk.Frame(outer)
     title_row.grid(row=0, column=0, sticky="w")
+    _make_mark(title_row, 40).pack(side="left", padx=(0, 13))
     ttk.Label(title_row, text="Repo",   style="TitleAccent.TLabel").pack(side="left")
     ttk.Label(title_row, text=" Growth", style="Title.TLabel").pack(side="left")
     ttk.Label(

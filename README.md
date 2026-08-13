@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="" width="64" height="64">
+
 # repo-growth
 
 [![Latest release](https://img.shields.io/github/v/release/jossdude/repo-growth?color=00e5a0&label=download)](https://github.com/jossdude/repo-growth/releases/latest)
