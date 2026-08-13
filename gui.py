@@ -8,6 +8,7 @@ import webbrowser
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox, font as tkfont
 
+import updater
 from repo_growth import (
     DETAIL_TARGETS,
     AnalysisCancelled,
@@ -19,10 +20,15 @@ from repo_growth import (
     generate_animated_html,
     generate_html,
 )
+from version import __version__
 
 # Above this many commits, the Full detail level prompts for confirmation
 # because analysing every commit can take minutes on a large history.
 FULL_WARN_THRESHOLD = 2000
+
+# How long after launch the silent update check runs. Long enough that the
+# window is up and interactive first.
+STARTUP_CHECK_DELAY_MS = 2500
 
 
 def _settings_path():
@@ -60,6 +66,11 @@ ACCENT_HOVER = "#22f0b0"
 ACCENT_DOWN  = "#00b785"
 TEXT         = "#e8eaf0"
 MUTED        = "#5a6070"
+
+# Greyed-out menu entries. MUTED manages only 2.9:1 against the menu's
+# SURFACE background — dim enough to read as disabled, too dim to read. This
+# sits at 4.8:1: still visibly inactive next to TEXT's 14:1, but legible.
+MENU_DISABLED = "#7b8394"
 
 # Font preferences. The static HTML template uses Syne (display sans) and
 # JetBrains Mono. We try those first, then fall back through likely-installed
@@ -106,6 +117,9 @@ def _configure_styles(root, sans, mono):
 
     # Mono small muted — matches the web subtitle "branch: ... · ... commits".
     style.configure("MonoSub.TLabel",    background=BG, foreground=MUTED,  font=fonts["mono_sub"])
+
+    # Clickable URL in the About box.
+    style.configure("Link.TLabel",       background=BG, foreground=ACCENT, font=fonts["mono_sub"])
 
     style.configure("TEntry",
         fieldbackground=SURFACE, foreground=TEXT,
@@ -185,7 +199,31 @@ def _configure_styles(root, sans, mono):
     return fonts
 
 
+def _menu(parent, fonts):
+    """A dropdown menu in the app's palette.
+
+    The menu *bar* strip is drawn by the window manager and largely ignores
+    these colours; the dropdowns that hang off it honour them.
+    """
+    return tk.Menu(
+        parent, tearoff=0,
+        bg=SURFACE, fg=TEXT,
+        activebackground=ACCENT, activeforeground=BG,
+        disabledforeground=MENU_DISABLED,
+        selectcolor=ACCENT,
+        borderwidth=0, activeborderwidth=0,
+        font=fonts["base"],
+    )
+
+
+def _place_near(win, parent, dx=90, dy=90):
+    win.geometry(f"+{parent.winfo_rootx() + dx}+{parent.winfo_rooty() + dy}")
+
+
 def launch_gui():
+    # A portable self-update leaves the previous build renamed beside us.
+    updater.cleanup_old_build()
+
     root = tk.Tk()
     root.title("Repo Growth")
     root.geometry("780x640")
@@ -203,12 +241,27 @@ def launch_gui():
     exclude_var  = tk.StringVar(value=settings.get("exclude", ""))
     static_var   = tk.BooleanVar(value=bool(settings.get("static", True)))
     animated_var = tk.BooleanVar(value=bool(settings.get("animated", True)))
+    updates_var  = tk.BooleanVar(value=bool(settings.get("check_updates", True)))
+
+    def save_settings():
+        _save_settings({
+            "repo":          repo_var.get().strip(),
+            "detail":        detail_var.get(),
+            "static":        static_var.get(),
+            "animated":      animated_var.get(),
+            "exclude":       exclude_var.get().strip(),
+            "check_updates": updates_var.get(),
+        })
 
     # Paths to the most recently generated files, used by the two Open buttons.
     last_output = {"static": "", "animated": ""}
 
     # The running analysis' cancel event, or None when idle.
     current_run = {"cancel": None}
+
+    # The in-flight update check or download. Worker threads only ever put
+    # messages on `msgs`; every Tk call below happens on the main thread.
+    update_run = {"busy": False, "cancel": None, "window": None, "bar": None}
 
     msgs = queue.Queue()
 
@@ -235,6 +288,8 @@ def launch_gui():
         log_text.configure(state="disabled")
 
     def run():
+        if current_run["cancel"] is not None:
+            return  # already analysing — the accelerator can fire while busy
         repo_path = repo_var.get().strip()
         if not repo_path or not os.path.isdir(repo_path):
             messagebox.showerror("Repo Growth", "Choose a valid repository folder first.")
@@ -287,13 +342,7 @@ def launch_gui():
 
         exclude = exclude_var.get().strip()
 
-        _save_settings({
-            "repo":     repo_path,
-            "detail":   detail_var.get(),
-            "static":   want_static,
-            "animated": want_animated,
-            "exclude":  exclude,
-        })
+        save_settings()
 
         log_text.configure(state="normal")
         log_text.delete("1.0", "end")
@@ -335,6 +384,190 @@ def launch_gui():
             cancel_event.set()
             cancel_btn.configure(state="disabled")
             write_log("Cancelling — waiting for the current step to finish...\n")
+        sync_menus()
+
+    # What sync_menus last wrote, so it can skip writes that change nothing.
+    # entryconfigure redraws an open menu on Windows, and poll() calls this
+    # ten times a second — writing unconditionally makes the File menu flicker
+    # for as long as it's held open.
+    menu_state = {}
+
+    def sync_menus():
+        """Mirror the toolbar buttons' enabled state onto the File menu."""
+        for label, widget in (
+            ("Generate",               run_btn),
+            ("Cancel Analysis",        cancel_btn),
+            ("Open Static Dashboard",  open_static_btn),
+            ("Open Animated Story",    open_animated_btn),
+        ):
+            state = str(widget["state"])
+            if menu_state.get(label) != state:
+                menu_state[label] = state
+                file_menu.entryconfigure(label, state=state)
+
+    # ------------------------------------------------------------ updates
+
+    def check_for_updates(manual=True):
+        """Ask GitHub what the latest release is, off the UI thread."""
+        if update_run["busy"]:
+            if manual:
+                messagebox.showinfo("Repo Growth", "An update check is already running.")
+            return
+        update_run["busy"] = True
+        if manual:
+            write_log("Checking for updates...\n")
+
+        def worker():
+            try:
+                msgs.put(("update_found", (updater.fetch_latest(), manual)))
+            except Exception as e:
+                msgs.put(("update_failed", (str(e), manual)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_update_found(info, manual):
+        update_run["busy"] = False
+        if not updater.is_newer(info["version"]):
+            if manual:
+                messagebox.showinfo(
+                    "Repo Growth",
+                    f"You're up to date — {__version__} is the latest version.",
+                )
+            return
+
+        headline = (
+            f"Repo Growth {info['version']} is available.\n"
+            f"You have {__version__}."
+        )
+        mode = updater.update_mode()
+        asset = info["assets"].get(updater.asset_name(mode) or "")
+
+        # macOS bundles, source checkouts, and releases missing our asset all
+        # fall back to the download page.
+        if asset is None:
+            if messagebox.askyesno("Repo Growth", headline + "\n\nOpen the download page?"):
+                webbrowser.open(info["page"])
+            return
+
+        if current_run["cancel"] is not None:
+            messagebox.showinfo(
+                "Repo Growth",
+                headline + "\n\nInstalling restarts the app, so finish or cancel "
+                "the current analysis first, then check again.",
+            )
+            return
+
+        if messagebox.askyesno(
+            "Repo Growth",
+            headline + "\n\nDownload and install it now? Repo Growth will restart.",
+        ):
+            start_download(asset, mode)
+
+    def start_download(asset, mode):
+        cancel = threading.Event()
+
+        win = tk.Toplevel(root)
+        win.title("Updating Repo Growth")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.transient(root)
+        _place_near(win, root, 110, 150)
+        win.protocol("WM_DELETE_WINDOW", cancel.set)
+
+        body = ttk.Frame(win, padding=(26, 22))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"Downloading {asset.get('name', 'update')}…").pack(anchor="w")
+        ttk.Label(
+            body, text="Repo Growth will restart once it's installed.",
+            style="Subtle.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
+        bar = ttk.Progressbar(body, mode="determinate", maximum=100, length=360)
+        bar.pack(fill="x", pady=(16, 14))
+        ttk.Button(body, text="Cancel", command=cancel.set).pack(anchor="e")
+        win.grab_set()
+
+        update_run.update(busy=True, cancel=cancel, window=win, bar=bar)
+
+        def worker():
+            try:
+                path = updater.download_asset(
+                    asset,
+                    progress=lambda f: msgs.put(("update_pct", f)),
+                    cancel_event=cancel,
+                )
+                msgs.put(("update_ready", (path, mode)))
+            except Exception as e:
+                # A cancel raises too; that isn't worth an error dialog.
+                msgs.put(("update_failed", (None, False) if cancel.is_set() else (str(e), True)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def close_update_window():
+        win = update_run.get("window")
+        if win is not None:
+            try:
+                win.grab_release()
+                win.destroy()
+            except tk.TclError:
+                pass
+        update_run.update(busy=False, cancel=None, window=None, bar=None)
+
+    def on_update_ready(path, mode):
+        close_update_window()
+        try:
+            updater.apply_update(path, mode)
+        except Exception as e:
+            messagebox.showerror("Repo Growth", str(e))
+            return
+        # Quit hard and now: the installer is waiting to replace our files,
+        # and in portable mode the new build is already starting up.
+        root.destroy()
+        os._exit(0)
+
+    def on_update_failed(message, manual):
+        close_update_window()
+        if message and manual:
+            messagebox.showerror("Repo Growth", message)
+        elif message:
+            write_log(f"Update check failed: {message}\n")
+
+    def show_about():
+        win = tk.Toplevel(root)
+        win.title("About Repo Growth")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.transient(root)
+        _place_near(win, root)
+
+        body = ttk.Frame(win, padding=(30, 26))
+        body.pack(fill="both", expand=True)
+
+        name_row = ttk.Frame(body)
+        name_row.pack(anchor="w")
+        ttk.Label(name_row, text="Repo",    style="TitleAccent.TLabel").pack(side="left")
+        ttk.Label(name_row, text=" Growth", style="Title.TLabel").pack(side="left")
+
+        ttk.Label(body, text=f"version {__version__}", style="MonoSub.TLabel") \
+            .pack(anchor="w", pady=(6, 18))
+        ttk.Label(
+            body,
+            text="Visualise how a git repository has grown over time.\n"
+                 "Everything runs on your machine — the charts it writes\n"
+                 "make no network requests at all.",
+        ).pack(anchor="w")
+
+        link = ttk.Label(body, text=updater.PROJECT_PAGE, style="Link.TLabel", cursor="hand2")
+        link.pack(anchor="w", pady=(14, 22))
+        link.bind("<Button-1>", lambda _e: webbrowser.open(updater.PROJECT_PAGE))
+
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="e")
+        ttk.Button(
+            buttons, text="Check for Updates",
+            command=lambda: (win.destroy(), check_for_updates(True)),
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="Close", style="Accent.TButton", command=win.destroy) \
+            .pack(side="left")
 
     def poll():
         try:
@@ -372,8 +605,19 @@ def launch_gui():
                     current_run["cancel"] = None
                     write_log(f"\nERROR: {payload}\n")
                     messagebox.showerror("Repo Growth", payload)
+                elif kind == "update_found":
+                    on_update_found(*payload)
+                elif kind == "update_pct":
+                    bar = update_run.get("bar")
+                    if bar is not None:
+                        bar.configure(value=payload * 100)
+                elif kind == "update_ready":
+                    on_update_ready(*payload)
+                elif kind == "update_failed":
+                    on_update_failed(*payload)
         except queue.Empty:
             pass
+        sync_menus()
         root.after(100, poll)
 
     outer = ttk.Frame(root, padding=(28, 24, 28, 20))
@@ -386,7 +630,8 @@ def launch_gui():
     ttk.Label(title_row, text=" Growth", style="Title.TLabel").pack(side="left")
     ttk.Label(
         outer,
-        text="visualise how a git repository has grown over time  ·  local repos only",
+        text="visualise how a git repository has grown over time  ·  local repos only"
+             f"  ·  v{__version__}",
         style="MonoSub.TLabel",
     ).grid(row=1, column=0, sticky="w", pady=(8, 24))
 
@@ -477,6 +722,41 @@ def launch_gui():
     log_text.configure(yscrollcommand=log_scroll.set)
     log_text.grid(row=0, column=0, sticky="nsew")
     log_scroll.grid(row=0, column=1, sticky="ns")
+
+    # Built last so its commands can reference the buttons they mirror.
+    menubar = _menu(root, fonts)
+
+    file_menu = _menu(menubar, fonts)
+    file_menu.add_command(label="Choose Repository…", accelerator="Ctrl+O", command=pick_repo)
+    file_menu.add_separator()
+    file_menu.add_command(label="Generate", accelerator="Ctrl+G", command=run)
+    file_menu.add_command(label="Cancel Analysis", command=cancel_run, state="disabled")
+    file_menu.add_separator()
+    file_menu.add_command(label="Open Static Dashboard", state="disabled",
+                          command=lambda: open_path("static"))
+    file_menu.add_command(label="Open Animated Story", state="disabled",
+                          command=lambda: open_path("animated"))
+    file_menu.add_separator()
+    file_menu.add_command(label="Exit", accelerator="Alt+F4", command=root.destroy)
+    menubar.add_cascade(label="File", menu=file_menu)
+
+    help_menu = _menu(menubar, fonts)
+    help_menu.add_command(label="Check for Updates…", command=lambda: check_for_updates(True))
+    help_menu.add_checkbutton(label="Check for updates at startup",
+                              variable=updates_var, command=save_settings)
+    help_menu.add_separator()
+    help_menu.add_command(label="Project on GitHub",
+                          command=lambda: webbrowser.open(updater.PROJECT_PAGE))
+    help_menu.add_command(label="About Repo Growth", command=show_about)
+    menubar.add_cascade(label="Help", menu=help_menu)
+
+    root.configure(menu=menubar)
+    root.bind("<Control-o>", lambda _e: pick_repo())
+    root.bind("<Control-g>", lambda _e: run())
+
+    # A checkout updates with `git pull`, so only built copies check on launch.
+    if updates_var.get() and updater.update_mode() != "source":
+        root.after(STARTUP_CHECK_DELAY_MS, lambda: check_for_updates(manual=False))
 
     poll()
     root.mainloop()

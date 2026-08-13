@@ -4,12 +4,34 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    paths:
+      - 'installer/**'
+      - '.github/workflows/build.yml'
 
 permissions:
   contents: write
 
 jobs:
+  # A broken installer script would otherwise only show up mid-release, so
+  # compile it against a stub program whenever it changes.
+  installer-check:
+    name: Compile installer script
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile
+        shell: bash
+        run: |
+          choco install innosetup --no-progress -y
+          mkdir -p dist && echo stub > dist/RepoGrowth.exe
+          # Git Bash would otherwise rewrite /DAppVersion=... into a file path.
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+            "$(bash .github/find-iscc.sh)" "/DAppVersion=0.0.0" installer/repo_growth.iss
+
   build:
+    if: github.event_name == 'push'
     name: Build ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -36,6 +58,25 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      # The built app reports this as its version and compares it against the
+      # latest release tag, so it has to be the tag we're building.
+      - name: Stamp version from tag
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          python - "$version" <<'PY'
+          import pathlib, re, sys
+          path = pathlib.Path("version.py")
+          text = path.read_text(encoding="utf-8")
+          new, n = re.subn(r'^__version__ = ".*"$',
+                           f'__version__ = "{sys.argv[1]}"', text, flags=re.M)
+          if n != 1:
+              raise SystemExit(f"expected one __version__ line in version.py, found {n}")
+          path.write_text(new, encoding="utf-8")
+          print(new.strip().splitlines()[-1])
+          PY
+
       - name: Build
         run: pyinstaller repo_growth.spec
 
@@ -53,7 +94,19 @@ jobs:
         if: matrix.label == 'macos'
         run: ditto -c -k --keepParent dist/RepoGrowth.app "${{ matrix.asset }}"
 
+      - name: Build installer (Windows)
+        if: matrix.label == 'windows'
+        shell: bash
+        run: |
+          choco install innosetup --no-progress -y
+          # Git Bash would otherwise rewrite /DAppVersion=... into a file path.
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+            "$(bash .github/find-iscc.sh)" "/DAppVersion=$VERSION" installer/repo_growth.iss
+          cp installer/Output/RepoGrowth-Setup.exe RepoGrowth-Setup.exe
+
       - name: Publish to release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset }}
+          files: |
+            ${{ matrix.asset }}
+            ${{ matrix.label == 'windows' && 'RepoGrowth-Setup.exe' || '' }}

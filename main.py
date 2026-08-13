@@ -19,6 +19,15 @@ import os
 import sys
 
 
+def _version_banner():
+    """Version plus how this copy updates itself — the first thing to ask
+    when a build is misbehaving."""
+    import updater
+    from version import __version__
+
+    return f"repo-growth {__version__} ({updater.update_mode()} build)"
+
+
 def run_cli(argv):
     from repo_growth import (
         DETAIL_TARGETS,
@@ -33,6 +42,7 @@ def run_cli(argv):
         prog="repo-growth",
         description="Visualise how a git repository has grown over time.",
     )
+    parser.add_argument("--version", action="version", version=_version_banner())
     parser.add_argument("repo", help="path to the local git repository")
     parser.add_argument("--detail", choices=list(DETAIL_TARGETS), default="Standard",
                         help="sampling detail level (default: Standard)")
