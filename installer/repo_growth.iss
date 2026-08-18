@@ -40,6 +40,9 @@ DisableProgramGroupPage=yes
 DisableDirPage=auto
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
+; The wizard windows and their taskbar button; the shortcuts and Add/Remove
+; Programs already inherit the same mark from the exe itself.
+SetupIconFile=..\assets\logo.ico
 
 ; Shut down a running copy so an update can overwrite the program, and don't
 ; drag the machine into a reboot over it.

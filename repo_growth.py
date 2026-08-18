@@ -783,7 +783,7 @@ def _analyse(repo, repo_path, progress, target_points, progress_pct,
 
 
 def _resource_base():
-    """Directory holding bundled data files (templates/ and its fonts/).
+    """Directory holding bundled data files (templates/, its fonts/, assets/).
 
     When frozen by PyInstaller, bundled data lives in the temp extraction dir
     exposed as sys._MEIPASS. From source that attribute is absent, so we fall
@@ -795,6 +795,7 @@ def _resource_base():
 BASE_DIR = _resource_base()
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(TEMPLATES_DIR, "fonts")
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
 # (family, font-weight range, woff2 filename). These are variable fonts, so one
 # file per family covers every weight the templates use. Bundled under the SIL

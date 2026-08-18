@@ -1,8 +1,10 @@
 """Tk GUI for repo_growth — pick a repo, choose detail level, generate."""
 
+import ctypes
 import json
 import os
 import queue
+import sys
 import threading
 import webbrowser
 import tkinter as tk
@@ -10,6 +12,7 @@ from tkinter import filedialog, ttk, messagebox, font as tkfont
 
 import updater
 from repo_growth import (
+    ASSETS_DIR,
     DETAIL_TARGETS,
     AnalysisCancelled,
     analyse_repo,
@@ -117,6 +120,54 @@ def _make_mark(parent, size=34):
             fill=ACCENT, outline="",
         )
     return canvas
+
+
+# The same mark as an icon file, for the window title bar, its dialogs and the
+# taskbar. Tk can't render SVG, so assets/logo.ico and assets/logo.png are
+# rasterised from assets/logo.svg by tools/make_icons.py and committed.
+ICON_ICO = os.path.join(ASSETS_DIR, "logo.ico")
+ICON_PNG = os.path.join(ASSETS_DIR, "logo.png")
+
+# Matches the macOS bundle identifier in repo_growth.spec.
+APP_ID = "com.repogrowth.app"
+
+
+def _claim_taskbar_identity():
+    """Make Windows treat us as our own app rather than as its host process.
+
+    Without an explicit AppUserModelID the shell groups the window under the
+    icon of whatever launched it — pythonw.exe from a source checkout — so the
+    taskbar button showed a different graphic to the title bar. Must run before
+    the window exists, and is a no-op everywhere but Windows.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:
+        pass  # an unrecognised shell just means the old grouping — not fatal
+
+
+def _apply_icon(root):
+    """Put the mark on the title bar, the taskbar and every dialog.
+
+    Windows wants a real .ico; `default=` makes it the icon for Toplevels too,
+    so the About and update windows get it without repeating this. Elsewhere Tk
+    takes a PhotoImage, and iconphoto's `default` flag does the same job.
+    """
+    if sys.platform == "win32" and os.path.exists(ICON_ICO):
+        try:
+            root.iconbitmap(default=ICON_ICO)
+            return
+        except tk.TclError:
+            pass
+    if os.path.exists(ICON_PNG):
+        try:
+            image = tk.PhotoImage(file=ICON_PNG)
+            root.iconphoto(True, image)
+            root._icon_image = image  # Tk keeps no reference of its own
+        except tk.TclError:
+            pass
 
 
 def _pick_family(root, candidates):
@@ -263,11 +314,15 @@ def launch_gui():
     # A portable self-update leaves the previous build renamed beside us.
     updater.cleanup_old_build()
 
+    # Before the window exists — the taskbar reads it when the button is made.
+    _claim_taskbar_identity()
+
     root = tk.Tk()
     root.title("Repo Growth")
     root.geometry("780x640")
     root.minsize(620, 520)
     root.configure(bg=BG)
+    _apply_icon(root)
 
     sans = _pick_family(root, SANS_CANDIDATES)
     mono = _pick_family(root, MONO_CANDIDATES)

@@ -10,7 +10,11 @@
 # double-clickable program.
 #
 # The whole templates/ tree (the two HTML templates plus templates/fonts/) is
-# bundled so the app's frozen-aware BASE_DIR / TEMPLATES_DIR / FONTS_DIR resolve.
+# bundled so the app's frozen-aware BASE_DIR / TEMPLATES_DIR / FONTS_DIR resolve,
+# and assets/ alongside it so the GUI can find the window icon at runtime.
+#
+# The Windows exe is stamped with the same mark, which is what Explorer, the
+# desktop shortcut and the installer show.
 
 import sys
 
@@ -22,6 +26,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('templates', 'templates'),
+        ('assets', 'assets'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -63,7 +68,9 @@ if is_macos:
     app = BUNDLE(
         coll,
         name='RepoGrowth.app',
-        icon=None,
+        # PyInstaller converts the PNG to the .icns a bundle needs, which it
+        # does with Pillow — see requirements-dev.txt.
+        icon='assets/logo.png',
         bundle_identifier='com.repogrowth.app',
     )
 else:
@@ -86,4 +93,5 @@ else:
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
+        icon='assets/logo.ico',
     )

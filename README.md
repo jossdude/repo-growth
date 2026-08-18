@@ -144,11 +144,15 @@ templates/
   template.html                  static dashboard (HTML + CSS + JS)
   template_animated.html         scroll-driven animated story
   fonts/                         bundled woff2 fonts (embedded at generation time)
+assets/
+  logo.svg                       the mark — source of truth for the artwork
+  logo.ico, logo.png             the same mark as window, taskbar and exe icons
+tools/make_icons.py              redraws those two from the mark (needs Pillow)
 repo_growth.spec                 PyInstaller build recipe (standalone program)
 installer/repo_growth.iss        Inno Setup recipe (Windows per-user installer)
 .github/workflows/build.yml      CI: build + publish binaries on a v* tag
 requirements.txt
-requirements-dev.txt             build/test tooling (PyInstaller, pytest)
+requirements-dev.txt             build/test tooling (PyInstaller, pytest, Pillow)
 LICENSE
 ```
 

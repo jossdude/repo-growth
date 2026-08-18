@@ -1,9 +1,9 @@
 """Tests for frozen-aware resource resolution in repo_growth.
 
-The standalone PyInstaller builds unpack bundled data (templates/ and its
-fonts/) into a temp dir exposed as sys._MEIPASS. _resource_base() must point
-there when frozen, and the derived data dirs must hang off it so both the
-templates and the embedded fonts are found.
+The standalone PyInstaller builds unpack bundled data (templates/ with its
+fonts/, and assets/) into a temp dir exposed as sys._MEIPASS. _resource_base()
+must point there when frozen, and the derived data dirs must hang off it so the
+templates, the embedded fonts and the window icon are all found.
 """
 
 import importlib
@@ -34,6 +34,14 @@ def test_data_dirs_rooted_at_meipass_when_frozen(monkeypatch, tmp_path):
         assert repo_growth.BASE_DIR == str(tmp_path)
         assert repo_growth.TEMPLATES_DIR == os.path.join(str(tmp_path), "templates")
         assert repo_growth.FONTS_DIR == os.path.join(str(tmp_path), "templates", "fonts")
+        assert repo_growth.ASSETS_DIR == os.path.join(str(tmp_path), "assets")
     finally:
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)
         importlib.reload(repo_growth)
+
+
+def test_window_icons_are_present():
+    # The GUI falls back to Tk's default icon rather than crashing if these are
+    # missing, so nothing else would notice them going astray.
+    for name in ("logo.ico", "logo.png", "logo.svg"):
+        assert os.path.isfile(os.path.join(repo_growth.ASSETS_DIR, name))
