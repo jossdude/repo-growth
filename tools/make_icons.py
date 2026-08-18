@@ -29,8 +29,7 @@ GRID = 32
 AXIS_PTS    = [(6, 4.5), (6, 26), (27.5, 26)]
 AXIS_WIDTH  = 2.4
 CURVE_PTS   = [(9.5, 21.2), (14.8, 16.2), (19.2, 18.4), (25, 9.2)]
-CURVE_WIDTH = 3
-NODE_RADII  = [2, 2, 2, 3.4]
+CURVE_WIDTH = 2.6
 
 # Every size Windows picks from: Explorer and the taskbar want the small end,
 # the alt-tab switcher and large icon views the big end.
@@ -63,11 +62,6 @@ def render(size):
 
     _round_stroke(draw, AXIS_PTS, AXIS_WIDTH, AXIS_COLOUR, scale)
     _round_stroke(draw, CURVE_PTS, CURVE_WIDTH, MARK_COLOUR, scale)
-    for (x, y), r in zip(CURVE_PTS, NODE_RADII):
-        draw.ellipse(
-            ((x - r) * scale, (y - r) * scale, (x + r) * scale, (y + r) * scale),
-            fill=MARK_COLOUR,
-        )
 
     return big.resize((size, size), Image.LANCZOS)
 

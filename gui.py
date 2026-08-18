@@ -85,12 +85,12 @@ MONO_CANDIDATES = ["JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas
 
 
 # The logo mark, defined on the same 32x32 grid as assets/logo.svg: a
-# lines-of-code curve rising off a muted axis, with each commit as a node and
-# the latest one picked out larger. Tk can't render SVG, so we redraw it on a
-# Canvas from the same coordinates — keep the two in step if either changes.
-_MARK_AXIS_PTS  = [(6, 4.5), (6, 26), (27.5, 26)]
-_MARK_CURVE_PTS = [(9.5, 21.2), (14.8, 16.2), (19.2, 18.4), (25, 9.2)]
-_MARK_NODE_RADII = [2, 2, 2, 3.4]
+# lines-of-code curve rising off a muted axis. Tk can't render SVG, so we
+# redraw it on a Canvas from the same coordinates — keep the two in step if
+# either changes.
+_MARK_AXIS_PTS    = [(6, 4.5), (6, 26), (27.5, 26)]
+_MARK_CURVE_PTS   = [(9.5, 21.2), (14.8, 16.2), (19.2, 18.4), (25, 9.2)]
+_MARK_CURVE_WIDTH = 2.6
 
 
 def _make_mark(parent, size=34):
@@ -111,14 +111,9 @@ def _make_mark(parent, size=34):
     )
     canvas.create_line(
         *scaled(_MARK_CURVE_PTS),
-        fill=ACCENT, width=max(1, 3 * s),
+        fill=ACCENT, width=max(1, _MARK_CURVE_WIDTH * s),
         capstyle=tk.ROUND, joinstyle=tk.ROUND,
     )
-    for (x, y), r in zip(_MARK_CURVE_PTS, _MARK_NODE_RADII):
-        canvas.create_oval(
-            (x - r) * s, (y - r) * s, (x + r) * s, (y + r) * s,
-            fill=ACCENT, outline="",
-        )
     return canvas
 
 
