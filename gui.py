@@ -13,6 +13,7 @@ from tkinter import filedialog, ttk, messagebox, font as tkfont
 import updater
 from repo_growth import (
     ASSETS_DIR,
+    DATE_FORMAT,
     DETAIL_TARGETS,
     AnalysisCancelled,
     analyse_repo,
@@ -22,6 +23,9 @@ from repo_growth import (
     default_output_path,
     generate_animated_html,
     generate_html,
+    preset_range,
+    range_slug,
+    resolve_range,
 )
 from version import __version__
 
@@ -245,6 +249,30 @@ def _configure_styles(root, sans, mono):
         bordercolor=[("active", ACCENT), ("focus", ACCENT)],
     )
 
+    # Small secondary buttons — the quick date ranges sit just under the date
+    # entries, so they have to be much tighter than a normal button.
+    style.configure("Chip.TButton",
+        background=BG, foreground=MUTED,
+        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
+        padding=(9, 3), font=fonts["small"], borderwidth=1,
+    )
+    style.map("Chip.TButton",
+        background=[("active", SURFACE), ("pressed", SURFACE)],
+        foreground=[("active", TEXT)],
+        bordercolor=[("active", ACCENT), ("focus", ACCENT)],
+    )
+
+    # The chip matching the dates currently in the entries.
+    style.configure("ChipOn.TButton",
+        background=SURFACE_HI, foreground=ACCENT,
+        bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
+        padding=(9, 3), font=fonts["small"], borderwidth=1,
+    )
+    style.map("ChipOn.TButton",
+        background=[("active", SURFACE_HI), ("pressed", SURFACE_HI)],
+        foreground=[("active", ACCENT)],
+    )
+
     style.configure("Accent.TButton",
         background=ACCENT, foreground="#0d0f14",
         bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
@@ -328,6 +356,8 @@ def launch_gui():
     repo_var     = tk.StringVar(value=settings.get("repo", ""))
     detail_var   = tk.StringVar(value=detail if detail in DETAIL_TARGETS else "Standard")
     exclude_var  = tk.StringVar(value=settings.get("exclude", ""))
+    since_var    = tk.StringVar(value=settings.get("since", ""))
+    until_var    = tk.StringVar(value=settings.get("until", ""))
     static_var   = tk.BooleanVar(value=bool(settings.get("static", True)))
     animated_var = tk.BooleanVar(value=bool(settings.get("animated", True)))
     updates_var  = tk.BooleanVar(value=bool(settings.get("check_updates", True)))
@@ -339,6 +369,8 @@ def launch_gui():
             "static":        static_var.get(),
             "animated":      animated_var.get(),
             "exclude":       exclude_var.get().strip(),
+            "since":         since_var.get().strip(),
+            "until":         until_var.get().strip(),
             "check_updates": updates_var.get(),
         })
 
@@ -365,6 +397,37 @@ def launch_gui():
         if path:
             repo_var.set(path)
 
+    # Quick-range buttons, keyed by preset name (None = the All time button).
+    chip_btns = {}
+
+    def set_range(preset):
+        """Fill the date entries from a quick range, or clear them for all time."""
+        if preset is None:
+            since_var.set("")
+            until_var.set("")
+            return
+        since, until = preset_range(preset)
+        since_var.set(f"{since:{DATE_FORMAT}}")
+        until_var.set(f"{until:{DATE_FORMAT}}")
+
+    def sync_chips(*_):
+        """Highlight whichever quick range the entries currently describe.
+
+        Typing a date by hand drops the highlight, so the buttons never claim
+        a window the run won't actually use.
+        """
+        current = (since_var.get().strip(), until_var.get().strip())
+        for preset, btn in chip_btns.items():
+            if preset is None:
+                match = current == ("", "")
+            else:
+                since, until = preset_range(preset)
+                match = current == (f"{since:{DATE_FORMAT}}", f"{until:{DATE_FORMAT}}")
+            btn.configure(style="ChipOn.TButton" if match else "Chip.TButton")
+
+    since_var.trace_add("write", sync_chips)
+    until_var.trace_add("write", sync_chips)
+
     def open_path(key):
         path = last_output.get(key, "")
         if path and os.path.exists(path):
@@ -389,7 +452,12 @@ def launch_gui():
                 "Pick at least one output: Static dashboard or Animated story.",
             )
             return
-        out_static   = default_output_path(repo_path)
+        try:
+            since, until = resolve_range(since_var.get(), until_var.get())
+        except ValueError as e:
+            messagebox.showerror("Repo Growth", str(e))
+            return
+        out_static   = default_output_path(repo_path, range_slug(since, until))
         out_animated = animated_output_path(out_static)
         want_static   = static_var.get()
         want_animated = animated_var.get()
@@ -450,7 +518,7 @@ def launch_gui():
                 analysis = analyse_repo(
                     repo_path, progress=log, target_points=target,
                     progress_pct=report_pct, cancel_event=cancel_event,
-                    exclude_dirs=exclude,
+                    exclude_dirs=exclude, since=since, until=until,
                 )
                 produced = {"static": "", "animated": ""}
                 if want_static:
@@ -745,6 +813,28 @@ def launch_gui():
     r += 1
     ttk.Label(form, text="comma-separated folder names to leave out, at any depth  ·  e.g. tests, fixtures  ·  blank charts everything", style="Subtle.TLabel") \
         .grid(row=r, column=1, sticky="w", pady=(0, 16))
+    r += 1
+
+    ttk.Label(form, text="DATE RANGE", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
+    range_frame = ttk.Frame(form)
+    range_frame.grid(row=r, column=1, sticky="w", pady=(0, 6))
+    ttk.Entry(range_frame, textvariable=since_var, width=11).pack(side="left")
+    ttk.Label(range_frame, text="→", style="Subtle.TLabel").pack(side="left", padx=7)
+    ttk.Entry(range_frame, textvariable=until_var, width=11).pack(side="left")
+    r += 1
+    # The quick ranges sit on their own row: four of them alongside the two
+    # entries overflow the window at its default width.
+    chips_frame = ttk.Frame(form)
+    chips_frame.grid(row=r, column=1, sticky="w", pady=(0, 4))
+    for chip_text, chip_preset in (("Last day", "day"), ("Last week", "week"),
+                                   ("Last month", "month"), ("All time", None)):
+        chip = ttk.Button(chips_frame, text=chip_text, style="Chip.TButton",
+                          command=lambda k=chip_preset: set_range(k))
+        chip.pack(side="left", padx=(0, 6))
+        chip_btns[chip_preset] = chip
+    sync_chips()
+    r += 1
+    ttk.Label(form, text="from → to as YYYY-MM-DD  ·  either side may be blank  ·  blank charts everything", style="Subtle.TLabel")         .grid(row=r, column=1, sticky="w", pady=(0, 16))
     r += 1
 
     ttk.Label(form, text="DETAIL LEVEL", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))

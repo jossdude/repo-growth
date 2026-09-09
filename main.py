@@ -8,6 +8,7 @@ Run with no arguments to launch the Tk GUI:
 Or pass a repository path to run headless (for scripts and scheduled runs):
 
     python main.py <repo> [--detail LEVEL] [--exclude DIRS]
+                          [--since DATE] [--until DATE] [--last day|week|month]
                           [--output PATH] [--no-static] [--no-animated]
 
 Outputs default to <repo>/Repo Growth/ with a date-stamped filename, exactly
@@ -30,12 +31,15 @@ def _version_banner():
 
 def run_cli(argv):
     from repo_growth import (
+        DATE_PRESETS,
         DETAIL_TARGETS,
         analyse_repo,
         animated_output_path,
         default_output_path,
         generate_animated_html,
         generate_html,
+        range_slug,
+        resolve_range,
     )
 
     parser = argparse.ArgumentParser(
@@ -49,6 +53,13 @@ def run_cli(argv):
     parser.add_argument("--exclude", default="",
                         help="comma-separated folder names to leave out of every "
                              "chart, at any depth (e.g. --exclude tests,fixtures)")
+    parser.add_argument("--since", default=None, metavar="YYYY-MM-DD",
+                        help="only chart commits on or after this date")
+    parser.add_argument("--until", default=None, metavar="YYYY-MM-DD",
+                        help="only chart commits on or before this date")
+    parser.add_argument("--last", choices=list(DATE_PRESETS), default=None,
+                        help="chart the last day, week or month (overrides "
+                             "--since/--until)")
     parser.add_argument("--output", default=None,
                         help="static HTML output path (default: <repo>/Repo Growth/<name>_growth_<date>.html)")
     parser.add_argument("--no-static", action="store_true",
@@ -61,10 +72,15 @@ def run_cli(argv):
         parser.error("nothing to do: both --no-static and --no-animated given")
     if not os.path.isdir(args.repo):
         parser.error(f"not a directory: {args.repo}")
+    try:
+        since, until = resolve_range(args.since, args.until, args.last)
+    except ValueError as e:
+        parser.error(str(e))
 
-    out_static = args.output or default_output_path(args.repo)
+    out_static = args.output or default_output_path(args.repo, range_slug(since, until))
     analysis = analyse_repo(args.repo, exclude_dirs=args.exclude,
-                            target_points=DETAIL_TARGETS[args.detail])
+                            target_points=DETAIL_TARGETS[args.detail],
+                            since=since, until=until)
     if not args.no_static:
         generate_html(analysis, out_static)
     if not args.no_animated:

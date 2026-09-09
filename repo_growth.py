@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 try:
     import git
@@ -281,6 +281,92 @@ def _milestones(data_points):
     return out
 
 
+# Quick ranges offered by the GUI buttons and `--last`, in days back from
+# today. "month" is a flat 30 days rather than a calendar month so the window
+# is the same length whenever you run it.
+DATE_PRESETS = {"day": 1, "week": 7, "month": 30}
+
+DATE_FORMAT = "%Y-%m-%d"
+
+
+class NoCommitsInRange(ValueError):
+    """Raised when a date range excludes every commit — nothing to chart."""
+
+
+def parse_date(value):
+    """A YYYY-MM-DD string as a date; None for blank/None (= no bound)."""
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, DATE_FORMAT).date()
+    except ValueError:
+        raise ValueError(f"Dates must be written YYYY-MM-DD (got '{text}')") from None
+
+
+def preset_range(preset, today=None):
+    """(since, until) for 'day' / 'week' / 'month', ending today."""
+    key = str(preset).strip().lower()
+    if key not in DATE_PRESETS:
+        raise ValueError(f"Unknown range '{preset}' — pick one of: "
+                         + ", ".join(DATE_PRESETS))
+    today = today or date.today()
+    return today - timedelta(days=DATE_PRESETS[key]), today
+
+
+def resolve_range(since=None, until=None, preset=None, today=None):
+    """Normalise the three ways of asking for a window into (since, until).
+
+    A preset wins over explicit dates so callers can offer both without
+    having to clear one. Either bound may stay None, meaning "open ended".
+    """
+    if preset:
+        return preset_range(preset, today)
+    since, until = parse_date(since), parse_date(until)
+    if since and until and since > until:
+        raise ValueError(f"The start date ({since}) is after the end date ({until}).")
+    return since, until
+
+
+def in_date_range(ts, since, until):
+    """Is this commit timestamp inside [since, until]? Both bounds inclusive,
+    `until` covering the whole of that day."""
+    day = datetime.fromtimestamp(ts).date()
+    if since and day < since:
+        return False
+    if until and day > until:
+        return False
+    return True
+
+
+def range_label(since, until, arrow="→"):
+    """Human-readable window for the report header; "" when unbounded.
+
+    `arrow="->"` gives an ASCII-only label: progress lines and exception text
+    can end up on a legacy-codepage Windows console, which can't encode "→"
+    and raises rather than printing. The HTML is UTF-8, so it keeps the arrow.
+    """
+    if since and until:
+        return f"{since:{DATE_FORMAT}} {arrow} {until:{DATE_FORMAT}}"
+    if since:
+        return f"since {since:{DATE_FORMAT}}"
+    if until:
+        return f"up to {until:{DATE_FORMAT}}"
+    return ""
+
+
+def range_slug(since, until):
+    """Filename-safe tag for a window, so two ranges charted on the same day
+    don't overwrite each other's report. "" when unbounded."""
+    if not since and not until:
+        return ""
+    return f"{since or 'start'}_to_{until or 'now'}".replace("-", "")
+
+
 def get_week_key(ts):
     dt = datetime.fromtimestamp(ts)
     monday = dt - timedelta(days=dt.weekday())
@@ -435,16 +521,19 @@ def _churn_per_pair(repo, commits, progress, on_pair, cancel_event, exclude_dirs
 REPO_GROWTH_DIRNAME = "Repo Growth"
 
 
-def default_output_path(repo_path):
+def default_output_path(repo_path, suffix=""):
     """Date-stamped default path inside the repo's "Repo Growth" folder.
 
     Successive runs on different days produce different filenames; same-day
-    reruns on the same repo overwrite (use --output to keep both).
+    reruns on the same repo overwrite (use --output to keep both). `suffix`
+    (a range_slug) keeps reports for different date windows apart.
     """
     repo_name = os.path.basename(os.path.abspath(repo_path)) or "repo"
     today = datetime.now().strftime("%Y-%m-%d")
     safe = re.sub(r"[^\w\-.]", "_", repo_name).strip("_") or "repo"
-    return os.path.join(repo_path, REPO_GROWTH_DIRNAME, f"{safe}_growth_{today}.html")
+    tag = f"_{suffix}" if suffix else ""
+    return os.path.join(repo_path, REPO_GROWTH_DIRNAME,
+                        f"{safe}_growth_{today}{tag}.html")
 
 
 def animated_output_path(static_path):
@@ -508,7 +597,8 @@ def _resolve_rev(repo):
 
 
 def analyse_repo(repo_path, progress=print, target_points=300,
-                 progress_pct=None, cancel_event=None, exclude_dirs=()):
+                 progress_pct=None, cancel_event=None, exclude_dirs=(),
+                 since=None, until=None):
     """Analyse the repo and return the chart-ready dict.
 
     `cancel_event` (a threading.Event) may be set from another thread to
@@ -517,6 +607,10 @@ def analyse_repo(repo_path, progress=print, target_points=300,
 
     `exclude_dirs` names folders to leave out of every chart (see
     normalise_exclude_dirs).
+
+    `since` / `until` (dates or YYYY-MM-DD strings, either optional) narrow
+    the history to a window, so the report shows growth over that period
+    rather than all time.
     """
     progress(f"Opening repo at: {repo_path}")
 
@@ -532,11 +626,17 @@ def analyse_repo(repo_path, progress=print, target_points=300,
     if exclude_dirs:
         progress("Excluding folders: " + ", ".join(sorted(exclude_dirs)))
 
+    since, until = resolve_range(since, until)
+    label = range_label(since, until, arrow="->")
+    if label:
+        progress(f"Date range: {label}")
+
     repo = git.Repo(repo_path)
     heartbeat = _Heartbeat(progress)
     try:
         return _analyse(repo, repo_path, progress, target_points,
-                        progress_pct, cancel_event, heartbeat, exclude_dirs)
+                        progress_pct, cancel_event, heartbeat, exclude_dirs,
+                        since, until)
     finally:
         heartbeat.stop()
         # Stop GitPython's persistent cat-file children so .git isn't left
@@ -545,7 +645,7 @@ def analyse_repo(repo_path, progress=print, target_points=300,
 
 
 def _analyse(repo, repo_path, progress, target_points, progress_pct,
-             cancel_event, heartbeat, exclude_dirs):
+             cancel_event, heartbeat, exclude_dirs, since=None, until=None):
     # Sampling traverses every blob in every sampled commit; churn diffs all
     # pairs in a single git process. Sampling dominates total runtime on
     # every real-world repo I've measured, so we weight it more heavily.
@@ -574,6 +674,19 @@ def _analyse(repo, repo_path, progress, target_points, progress_pct,
     except git.GitCommandError as e:
         progress(f"Couldn't read '{rev}' ({e}); falling back to HEAD")
         all_commits = list(repo.iter_commits("HEAD"))
+
+    # Narrow to the window before anything else, so every statistic below —
+    # counts, authors, churn, growth rate — describes that period alone.
+    if since or until:
+        in_window = [c for c in all_commits
+                     if in_date_range(c.committed_date, since, until)]
+        window = range_label(since, until, arrow="->")
+        progress(f"{len(in_window):,} of {len(all_commits):,} commits fall in {window}")
+        if not in_window:
+            raise NoCommitsInRange(
+                f"No commits in {window} - widen the date range and try again.")
+        all_commits = in_window
+
     total = len(all_commits)
     progress(f"Total commits: {total}")
 
@@ -735,6 +848,7 @@ def _analyse(repo, repo_path, progress, target_points, progress_pct,
     return {
         "repo_name": os.path.basename(os.path.abspath(repo_path)),
         "branch": display_branch,
+        "date_range": range_label(since, until),
         "total_commits": total,
         "data": data_points,
         "top_exts": top_exts,
@@ -836,6 +950,11 @@ def _font_faces_css():
     return _font_faces_cache
 
 
+def _date_range_html(label):
+    """The header's date-range clause, or nothing at all for an all-time run."""
+    return f" &nbsp;·&nbsp; {label}" if label else ""
+
+
 def _render_template(template_name, analysis):
     template_path = os.path.join(TEMPLATES_DIR, template_name)
     with open(template_path, "r", encoding="utf-8") as f:
@@ -846,6 +965,7 @@ def _render_template(template_name, analysis):
         .replace("{{REPO_NAME}}",     analysis["repo_name"])
         .replace("{{BRANCH}}",        analysis["branch"])
         .replace("{{TOTAL_COMMITS}}", f"{analysis['total_commits']:,}")
+        .replace("{{DATE_RANGE}}",    _date_range_html(analysis.get("date_range", "")))
         .replace("{{DATA_JSON}}",     json.dumps(analysis["data"]))
         .replace("{{FREQ_JSON}}",     json.dumps(analysis["commit_frequency"]))
         .replace("{{TOP_EXTS_JSON}}", json.dumps(analysis["top_exts"]))

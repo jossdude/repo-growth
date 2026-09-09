@@ -67,9 +67,13 @@ python main.py
 
 The Tk GUI opens. **File** holds the same actions as the buttons — Choose Repository (`Ctrl+O`), Generate (`Ctrl+G`), Cancel, and opening either result — and **Help** covers About and updates.
 
-Pick a repository folder, optionally list folders to **Exclude** (comma-separated, matched at any depth — e.g. `tests` to leave test code out of every chart), choose a **Detail level**, tick which **Outputs** you want (**Static dashboard** and/or **Animated story**), then click **Generate**. Progress streams to the log panel; **Cancel** stops a run at the next commit boundary, and **Open Static** / **Open Animated** launch each result when it's done. Your last-used repo and options are remembered between sessions.
+Pick a repository folder, optionally list folders to **Exclude** (comma-separated, matched at any depth — e.g. `tests` to leave test code out of every chart), optionally set a **Date range**, choose a **Detail level**, tick which **Outputs** you want (**Static dashboard** and/or **Animated story**), then click **Generate**. Progress streams to the log panel; **Cancel** stops a run at the next commit boundary, and **Open Static** / **Open Animated** launch each result when it's done. Your last-used repo and options are remembered between sessions.
 
-Files are saved inside the target repo at `<repo>/Repo Growth/<repo>_growth_<YYYY-MM-DD>.html` (the animated one gets an `_animated` suffix). The folder is created automatically.
+**Date range** is optional and empty by default, which charts the whole history. Fill in either box (`YYYY-MM-DD`, both inclusive) to chart a window instead, or use **Last day** / **Last week** / **Last month** to fill them in for you; **All time** clears them again. Leaving one box blank leaves that end open — a start date with no end means "everything since". The highlighted button shows which window the entries currently describe, and typing a date by hand drops the highlight.
+
+Everything in the report then describes that window alone: growth is measured from the first commit inside it, not from the repo's first commit, and the commit count, contributor and churn figures follow the same window.
+
+Files are saved inside the target repo at `<repo>/Repo Growth/<repo>_growth_<YYYY-MM-DD>.html` (the animated one gets an `_animated` suffix). A date range adds its own tag to the filename, so an all-time chart and a last-week chart made on the same day don't overwrite each other. The folder is created automatically.
 
 > Tip: add `Repo Growth/` to that repo's `.gitignore` to keep generated charts out of version control.
 
@@ -82,9 +86,13 @@ python main.py --version                           # version + how this copy upd
 python main.py path/to/repo                        # both outputs, Standard detail
 python main.py path/to/repo --detail Full --exclude tests
 python main.py path/to/repo --no-animated --output charts/growth.html
+python main.py path/to/repo --last week                 # just the last 7 days
+python main.py path/to/repo --since 2025-01-01 --until 2025-06-30
 ```
 
 `--detail` accepts `Rough`, `Standard`, `Detailed` or `Full`; `--exclude` takes comma-separated folder names to leave out of every chart, matched at any depth (`--exclude tests,fixtures`); `--output` overrides the static HTML path (the animated file sits next to it with an `_animated` suffix).
+
+`--since` / `--until` (`YYYY-MM-DD`, both inclusive, either one optional) restrict the chart to a date window, and `--last day|week|month` is a shorthand for a window ending today — `month` meaning the last 30 days. A window that contains no commits stops the run with a message rather than producing an empty chart.
 
 Charts always follow **`main`**. Repositories without a `main` branch fall back to whatever is checked out, so older `master` repos still work.
 
@@ -165,6 +173,7 @@ LICENSE
 - **`ModuleNotFoundError: No module named 'tkinter'`** — install your platform's Tk package (`sudo apt install python3-tk` on Debian/Ubuntu). Tkinter is bundled with the standard Python installers on Windows and macOS.
 - **`Error: gitpython is required`** — run `pip install -r requirements.txt`.
 - **"That folder doesn't look like a Git repository"** — point Repo Growth at the root of a clone (the folder containing `.git`), not a subfolder.
+- **"No commits in … - widen the date range and try again"** — the date range excludes every commit on `main`. Check the dates, remember both bounds are inclusive, or clear the range to chart the whole history.
 - **Detailed level is slow on a huge repo** — that's expected; it samples near every commit. Use Standard or Rough for very large histories.
 - **"Couldn't replace the running program"** — the portable build can only update itself if it can write to its own folder. Move it somewhere you own (Desktop, Documents) or switch to `RepoGrowth-Setup.exe`, which installs per-user.
 - **The run stalls partway through on a OneDrive/SharePoint-synced repo** — "Files On-Demand" can leave git objects as cloud-only placeholders (commits synced from another machine arrive dehydrated), and every read then waits on a download. Repo Growth counts these before starting and warns you; the durable fix is right-clicking the repo folder and choosing **Always keep on this device**.
