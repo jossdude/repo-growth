@@ -3,6 +3,7 @@
 import ctypes
 import json
 import os
+import pathlib
 import queue
 import re
 import subprocess
@@ -315,16 +316,33 @@ def _took(seconds):
 
 
 def _reveal(path):
-    """Show a file selected in Explorer / Finder, or open its folder."""
-    try:
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", path])
-        else:
-            subprocess.Popen(["xdg-open", os.path.dirname(path)])
-    except Exception:
-        pass
+    """Show a file selected in Explorer / Finder, or open its folder.
+
+    Raises on failure so the caller can say so — swallowing it left the link
+    looking dead with no clue why.
+    """
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", path])
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(path)])
+
+
+def _open_file(path):
+    """Open a generated page in the default browser.
+
+    Hands the file itself to the OS rather than building a file:/// URL by
+    hand: a folder name containing '#' or '%' turned that URL into a
+    different, missing file, and the open failed without a word.
+    """
+    path = os.path.abspath(path)
+    if sys.platform == "win32":
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    elif not webbrowser.open(pathlib.Path(path).as_uri()):
+        subprocess.Popen(["xdg-open", path])
 
 
 def _place_near(win, parent, dx=90, dy=90):
@@ -526,8 +544,17 @@ def build_gui():
 
     def open_path(key):
         path = last_output.get(key, "")
-        if path and os.path.exists(path):
-            webbrowser.open(f"file:///{os.path.abspath(path).replace(os.sep, '/')}")
+        if not path:
+            return
+        if not os.path.exists(path):
+            messagebox.showerror(
+                "Repo Growth",
+                f"Couldn't find the report. It may have been moved or deleted:\n\n{path}")
+            return
+        try:
+            _open_file(path)
+        except Exception as e:
+            messagebox.showerror("Repo Growth", f"Couldn't open the report:\n\n{path}\n\n{e}")
 
     def write_log(text):
         stamp = datetime.now().strftime("%H:%M:%S")
@@ -765,8 +792,17 @@ def build_gui():
 
     def show_in_folder():
         path = last_output["static"] or last_output["animated"]
-        if path and os.path.exists(path):
+        if not path:
+            return
+        if not os.path.exists(path):
+            messagebox.showerror(
+                "Repo Growth",
+                f"Couldn't find the report. It may have been moved or deleted:\n\n{path}")
+            return
+        try:
             _reveal(path)
+        except Exception as e:
+            messagebox.showerror("Repo Growth", f"Couldn't show the report's folder:\n\n{path}\n\n{e}")
 
     # Footer status line — refreshed off the UI thread, since counting commits
     # on a large repo can take a moment. The token drops stale answers.
