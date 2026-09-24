@@ -289,6 +289,21 @@
   }
   .commit .hash { font-family: var(--mono); margin-right: 8px; }
 
+  /* By commit / by date. One shared setting: flipping it in any chapter flips
+     them all, so scrolling on never lands on a mismatched axis. */
+  .axis-toggle {
+    display: inline-flex; flex: none;
+    padding: 2px; border-radius: 999px;
+    background: var(--fill);
+  }
+  .axis-toggle button {
+    border: 0; background: none; cursor: pointer;
+    font: 500 12px var(--sans); color: var(--text-2);
+    padding: 4px 11px; border-radius: 999px;
+  }
+  .axis-toggle button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  .axis-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
   .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; }
   .key {
     display: inline-flex; align-items: center; gap: 7px;
@@ -450,7 +465,7 @@
       </div>
     </div>
     <div class="plot"><div class="main"><canvas id="linesChart"></canvas></div></div>
-    <div class="foot"><div class="commit" id="msgLines"><span class="hash"></span><span class="text"></span></div></div>
+    <div class="foot"><div class="commit" id="msgLines"><span class="hash"></span><span class="text"></span></div><div class="axis-toggle" role="group" aria-label="X axis"><button type="button" data-axis="commit">By commit</button><button type="button" data-axis="date">By date</button></div></div>
   </div>
 </section>
 
@@ -468,7 +483,7 @@
       </div>
     </div>
     <div class="plot"><div class="main"><canvas id="filesChart"></canvas></div></div>
-    <div class="foot"><div class="commit" id="msgFiles"><span class="hash"></span><span class="text"></span></div></div>
+    <div class="foot"><div class="commit" id="msgFiles"><span class="hash"></span><span class="text"></span></div><div class="axis-toggle" role="group" aria-label="X axis"><button type="button" data-axis="commit">By commit</button><button type="button" data-axis="date">By date</button></div></div>
   </div>
 </section>
 
@@ -489,7 +504,7 @@
       <div class="main"><canvas id="extsChart"></canvas></div>
       <div class="donut"><canvas id="extsDonut"></canvas></div>
     </div>
-    <div class="foot"><div class="legend" id="extsLegend"></div></div>
+    <div class="foot"><div class="legend" id="extsLegend"></div><div class="axis-toggle" role="group" aria-label="X axis"><button type="button" data-axis="commit">By commit</button><button type="button" data-axis="date">By date</button></div></div>
   </div>
 </section>
 
@@ -527,7 +542,7 @@
       </div>
     </div>
     <div class="plot"><div class="main"><canvas id="contribChart"></canvas></div></div>
-    <div class="foot"><div class="commit" id="msgContrib"><span class="hash"></span><span class="text"></span></div></div>
+    <div class="foot"><div class="commit" id="msgContrib"><span class="hash"></span><span class="text"></span></div><div class="axis-toggle" role="group" aria-label="X axis"><button type="button" data-axis="commit">By commit</button><button type="button" data-axis="date">By date</button></div></div>
   </div>
 </section>
 
@@ -659,7 +674,7 @@ const MILESTONES = (() => {
       const t = m * Math.pow(10, k);
       if (DATA[0].lines >= t) continue;
       const hit = DATA.find(d => d.lines >= t);
-      if (hit) out.push({ threshold: t, date: hit.date });
+      if (hit) out.push({ threshold: t, date: hit.date, idx: DATA.indexOf(hit) });
     }
   }
   return out.slice(-4);
@@ -748,6 +763,45 @@ function drawXAxis(ctx, PAD, CW, H, tMin, tMax) {
   }
 }
 
+/* ---------------- X axis (by commit / by date) ---------------- */
+
+/* 'commit' spaces points evenly, one slot per sampled commit, so a busy day
+   spreads out instead of stacking into a vertical wall. 'date' spaces them by
+   calendar time, so quiet stretches read as flat runs. Remembered per browser. */
+let AXIS_MODE = 'commit';
+try { if (localStorage.getItem('rg-axis') === 'date') AXIS_MODE = 'date'; } catch (e) {}
+
+const commitNo = (d, i) => (d && d.commit) || i + 1;  // older data has no "commit"
+
+/* Draws the x-axis labels for the current mode and returns `at(i)`, mapping a
+   (possibly fractional) point index to an x pixel. */
+function xAxis(ctx, data, PAD, CW, H) {
+  const n = data.length;
+  const times = data.map(d => new Date(d.date).getTime());
+  if (AXIS_MODE === 'date') {
+    const tMin = times[0], tSpan = (times[n-1] - tMin) || 1;
+    drawXAxis(ctx, PAD, CW, H, tMin, times[n-1]);
+    return i => {
+      const f = Math.min(Math.floor(i), n - 1), fr = i - f;
+      const t = fr > 0 && f < n - 1 ? times[f] + (times[f+1] - times[f]) * fr : times[f];
+      return PAD.left + ((t - tMin) / tSpan) * CW;
+    };
+  }
+  const at = i => PAD.left + (i / ((n - 1) || 1)) * CW;
+  const count = Math.max(1, Math.min(6, Math.floor(CW / 96)));
+  ctx.font = AXIS_FONT; ctx.fillStyle = INK.t3;
+  let prev = '';
+  for (let k = 0; k <= count; k++) {
+    const i = Math.round((n - 1) * (k / count));
+    const label = '#' + commitNo(data[i], i).toLocaleString();
+    if (label === prev) continue;
+    prev = label;
+    ctx.textAlign = k === 0 ? 'left' : k === count ? 'right' : 'center';
+    ctx.fillText(label, at(i), H - PAD.bottom + 19);
+  }
+  return at;
+}
+
 function smoothLine(ctx, pts) {
   if (pts.length < 2) {
     if (pts.length === 1) { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); }
@@ -806,26 +860,20 @@ function drawAnimatedLine(canvas, data, valueKey, color, progress, milestones, i
   const { minY, maxY, ticks } = lineScale(values, integer);
   const { PAD, CW, CH } = layout(ctx, W, H, ticks.map(compact));
   if (CW <= 0 || CH <= 0) return null;
-  const times = data.map(d => new Date(d.date).getTime());
-  const tMin = times[0], tMax = times[n-1];
-  const tSpan = (tMax - tMin) || 1;
-  const xp = t => PAD.left + ((t - tMin) / tSpan) * CW;
   const yp = v => PAD.top  + CH - ((v - minY) / (maxY - minY)) * CH;
   const base = PAD.top + CH;
 
   drawYGrid(ctx, PAD, CW, ticks, yp, compact);
-  drawXAxis(ctx, PAD, CW, H, tMin, tMax);
+  const xAt = xAxis(ctx, data, PAD, CW, H);
 
   // Build the leading slice of points up to the current progress.
   const { full, frac } = progressIndex(n, progress);
   const pts = [];
-  for (let i = 0; i <= full; i++) pts.push({ x: xp(times[i]), y: yp(values[i]) });
+  for (let i = 0; i <= full; i++) pts.push({ x: xAt(i), y: yp(values[i]) });
   let edgeValue = values[full];
-  let edgeT = times[full];
   if (full < n - 1 && frac > 0) {
-    edgeT = times[full] + (times[full+1] - times[full]) * frac;
     edgeValue = values[full] + (values[full+1] - values[full]) * frac;
-    pts.push({ x: xp(edgeT), y: yp(edgeValue) });
+    pts.push({ x: xAt(full + frac), y: yp(edgeValue) });
     // edgeIdx remains "full" — the most recent fully-included commit is still
     // the one we report under the chart.
   }
@@ -858,9 +906,8 @@ function drawAnimatedLine(canvas, data, valueKey, color, progress, milestones, i
     const placed = [];
     ctx.font = '600 11px ' + SANS;
     milestones.forEach(ms => {
-      const mt = new Date(ms.date).getTime();
-      if (mt < tMin || mt > tMax) return;
-      const x = xp(mt);
+      if (!(ms.idx >= 0) || ms.idx >= n) return;
+      const x = xAt(ms.idx);
       const a = Math.max(0, Math.min(1, (last.x - x) / 28));
       if (a <= 0) return;
       const label = fmtInt(ms.threshold) + ' lines';
@@ -908,10 +955,6 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
     return m;
   };
 
-  const times = data.map(d => new Date(d.date).getTime());
-  const tMin = times[0], tMax = times[n-1];
-  const tSpan = (tMax - tMin) || 1;
-  const xp = t => PAD.left + ((t - tMin) / tSpan) * CW;
   // Bands are drawn as a share of each commit's own total, so the stack always
   // fills the plot and the axis is a fixed 0-100%. That trades away absolute
   // scale to make composition readable — the donut and legend carry the rest.
@@ -919,21 +962,20 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
   const base = PAD.top + CH;
 
   drawYGrid(ctx, PAD, CW, pctTicks, yp, pctFmt);
-  drawXAxis(ctx, PAD, CW, H, tMin, tMax);
+  const xAt = xAxis(ctx, data, PAD, CW, H);
 
   // Build the partial dataset (up to progress) with an interpolated trailing
   // point so the right edge animates smoothly between commits.
   const { full, frac } = progressIndex(n, progress);
-  const partial = data.slice(0, full + 1).map(d => ({ t: new Date(d.date).getTime(), m: valsAt(d) }));
+  const partial = data.slice(0, full + 1).map((d, i) => ({ x: xAt(i), m: valsAt(d) }));
   if (full < n - 1 && frac > 0) {
     const a = data[full], b = data[full + 1];
-    const t = new Date(a.date).getTime() + (new Date(b.date).getTime() - new Date(a.date).getTime()) * frac;
     const ma = valsAt(a), mb = valsAt(b), m = {};
     for (const e of exts) m[e] = ma[e] + (mb[e] - ma[e]) * frac;
-    partial.push({ t, m });
+    partial.push({ x: xAt(full + frac), m });
   }
   if (partial.length < 2) {
-    playheadLine(ctx, xp(partial[0].t), PAD.top, base, 'rgba(255,255,255,0.5)');
+    playheadLine(ctx, partial[0].x, PAD.top, base, 'rgba(255,255,255,0.5)');
     return { edgeIdx: full, edgeExt: partial.length ? partial[0].m : {} };
   }
 
@@ -948,13 +990,13 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
 
   // Draw bands top-to-bottom for correct overdraw order.
   for (let ei = exts.length - 1; ei >= 0; ei--) {
-    const top = stacks.map((s, i) => ({ x: xp(partial[i].t), y: yp(s[ei]) }));
+    const top = stacks.map((s, i) => ({ x: partial[i].x, y: yp(s[ei]) }));
     smoothLine(ctx, top);
     if (ei === 0) {
       ctx.lineTo(top[top.length-1].x, base);
       ctx.lineTo(top[0].x, base);
     } else {
-      const bot = stacks.map((s, i) => ({ x: xp(partial[i].t), y: yp(s[ei-1]) })).reverse();
+      const bot = stacks.map((s, i) => ({ x: partial[i].x, y: yp(s[ei-1]) })).reverse();
       bot.forEach((p, j) => {
         if (j === 0) ctx.lineTo(p.x, p.y);
         else {
@@ -975,7 +1017,7 @@ function drawAnimatedStacked(canvas, data, exts, colors, progress) {
     }
   }
 
-  playheadLine(ctx, xp(partial[partial.length - 1].t), PAD.top, base, 'rgba(255,255,255,0.6)');
+  playheadLine(ctx, partial[partial.length - 1].x, PAD.top, base, 'rgba(255,255,255,0.6)');
 
   return { edgeIdx: full, edgeExt: partial[partial.length-1].m };
 }
@@ -1254,6 +1296,9 @@ const readouts = {
 $('valAdded').style.color = COLOR.added;
 $('valRemoved').style.color = COLOR.removed;
 
+/* The commit number is what tells same-day commits apart. */
+const dateAndCommit = (d, i) => `${fmtDate(d.date)} · #${commitNo(d, i).toLocaleString()}`;
+
 // Writes only on change: these run every animation frame.
 function put(el, s) { if (el && el.textContent !== s) el.textContent = s; }
 
@@ -1261,7 +1306,7 @@ function updateLineReadout(key, edgeIdx, edgeValue, unit) {
   const d = DATA[edgeIdx];
   if (!d) return;
   const r = readouts[key];
-  put(r.date, fmtDate(d.date));
+  put(r.date, dateAndCommit(d, edgeIdx));
   put(r.val, fmtInt(edgeValue));
   if (unit && r.unit) put(r.unit, unit);
   put(r.msg.querySelector('.hash'), d.hash || '');
@@ -1285,7 +1330,7 @@ EXTS_PLUS.forEach((ext, i) => $('extsLegend').appendChild(legendItem(EXT_COLORS_
 
 function renderExtsReadout(edgeIdx, extInfo) {
   const d = DATA[edgeIdx];
-  if (d) put(readouts.exts.date, fmtDate(d.date));
+  if (d) put(readouts.exts.date, dateAndCommit(d, edgeIdx));
   const total = EXTS_PLUS.reduce((s, e) => s + ((extInfo && extInfo[e]) || 0), 0);
   const el = $('extsLegend');
   EXTS_PLUS.forEach((ext, i) => {
@@ -1443,6 +1488,19 @@ function onResize() {
 
 window.addEventListener('scroll', onScroll, { passive: true });
 window.addEventListener('resize', onResize);
+
+/* ---------------- Axis toggle ---------------- */
+const axisButtons = document.querySelectorAll('.axis-toggle button');
+function syncAxisButtons() {
+  axisButtons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.axis === AXIS_MODE)));
+}
+axisButtons.forEach(b => b.addEventListener('click', () => {
+  AXIS_MODE = b.dataset.axis;
+  try { localStorage.setItem('rg-axis', AXIS_MODE); } catch (e) {}
+  syncAxisButtons();
+  redraw();
+}));
+syncAxisButtons();
 
 /* ---------------- Finale stats (with count-up) ---------------- */
 (function renderFinale() {

@@ -20,7 +20,7 @@ The **dashboard** opens with the repo's headline numbers — lines of code, file
 
 The dashboard is light by default and switches to a dark theme with your system setting.
 
-The **story** replays that history as you scroll — chapter by chapter through lines, files, file types, churn and contributors — each chart drawing itself in behind a glowing playhead while a big number counts up, with milestone pills ("25,000 lines") appearing as the line crosses them. A chapter list on the right jumps between chapters, a **play** button auto-scrolls the whole thing, and the finale sums it up in six big stats.
+The **story** replays that history as you scroll — chapter by chapter through lines, files, file types, churn and contributors — each chart drawing itself in behind a glowing playhead while a big number counts up, with milestone pills ("25,000 lines") appearing as the line crosses them. A **by commit / by date** switch sets the x-axis (by commit spreads out days with several commits; the choice is remembered), a chapter list on the right jumps between chapters, a **play** button auto-scrolls the whole thing, and the finale sums it up in six big stats.
 
 Works on local clones — including private repos. The analysis runs entirely on your machine, and the generated pages embed their own fonts, so an open chart makes **no network requests** at all. Share or archive a single HTML file that renders identically offline.
 

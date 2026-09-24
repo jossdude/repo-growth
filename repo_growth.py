@@ -760,6 +760,9 @@ def _analyse(repo, repo_path, progress, target_points, progress_pct,
             "authors": authors_at_sample[idx] if idx < len(authors_at_sample) else 0,
             "hash": commit.hexsha[:7],
             "message": msg,
+            # 1-based position in the (windowed) history. Sampling skips
+            # commits, so the list index alone can't give the real number.
+            "commit": indices[idx] + 1,
         })
 
         if idx > 0:
