@@ -1,21 +1,30 @@
-"""Tk GUI for repo_growth — pick a repo, choose detail level, generate."""
+"""CustomTkinter GUI for repo_growth — pick a repo, choose detail level, generate."""
 
 import ctypes
 import json
 import os
 import queue
+import re
+import subprocess
 import sys
 import threading
+import time
 import webbrowser
 import tkinter as tk
-from tkinter import filedialog, ttk, messagebox, font as tkfont
+from datetime import datetime
+from tkinter import filedialog, messagebox, font as tkfont
 
+import customtkinter as ctk
+
+import gui_art
 import updater
 from repo_growth import (
     ASSETS_DIR,
     DATE_FORMAT,
     DETAIL_TARGETS,
+    SAMPLE_WEIGHT,
     AnalysisCancelled,
+    _resolve_rev,
     analyse_repo,
     animated_output_path,
     cloud_placeholder_count,
@@ -64,64 +73,69 @@ def _save_settings(data):
         pass
 
 
-BG           = "#0d0f14"
-SURFACE      = "#141720"
-SURFACE_HI   = "#1a1e28"
-BORDER       = "#1e2230"
-ACCENT       = "#00e5a0"
-ACCENT_HOVER = "#22f0b0"
-ACCENT_DOWN  = "#00b785"
-TEXT         = "#e8eaf0"
-MUTED        = "#5a6070"
-MARK_AXIS    = "#2a3242"   # the logo's chart axis — sits between BORDER and MUTED
+# Every colour is a (light, dark) pair, the form CustomTkinter takes, so the
+# window follows the OS appearance without any code of ours. The same tokens
+# are used by both HTML templates.
+PALETTE = {
+    "bg":           ("#f5f5f7", "#000000"),
+    "card":         ("#ffffff", "#1c1c1e"),
+    "text":         ("#1d1d1f", "#f5f5f7"),
+    "secondary":    ("#6e6e73", "#a1a1a6"),
+    "tertiary":     ("#86868b", "#8e8e93"),
+    "hairline":     ("#e5e5ea", "#2c2c2e"),
+    "fill":         ("#e8e8ed", "#2c2c2e"),
+    "fill_hover":   ("#dcdce1", "#3a3a3c"),
+    "field":        ("#ffffff", "#2c2c2e"),
+    "field_border": ("#d2d2d7", "#3a3a3c"),
+    # The selected segment of a segmented control, raised off the fill.
+    "segment":      ("#ffffff", "#636366"),
+    "accent":       ("#08865a", "#32d583"),
+    "accent_hover": ("#06744d", "#5ddf9c"),
+    "on_accent":    ("#ffffff", "#04150d"),
+    # The log's well inside the progress panel.
+    "well":         ("#f5f5f7", "#000000"),
+}
 
-# Greyed-out menu entries. MUTED manages only 2.9:1 against the menu's
-# SURFACE background — dim enough to read as disabled, too dim to read. This
-# sits at 4.8:1: still visibly inactive next to TEXT's 14:1, but legible.
-MENU_DISABLED = "#7b8394"
+# Chart palette slots 1-3, for the output previews — the same fixed order the
+# templates use, so the thumbnails look like the pages they stand for.
+CHART_BLUE   = ("#007aff", "#0a84ff")
+CHART_ORANGE = ("#ff9500", "#ff9f0a")
+CHART_PURPLE = ("#af52de", "#bf5af2")
 
-# Font preferences. The static HTML template uses Syne (display sans) and
-# JetBrains Mono. We try those first, then fall back through likely-installed
-# Windows alternatives. To get an exact match, install the two Google Fonts
-# locally — the GUI will pick them up automatically.
-SANS_CANDIDATES = ["Syne", "Segoe UI Variable Display", "Segoe UI", "Arial"]
-MONO_CANDIDATES = ["JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"]
-
-
-# The logo mark, defined on the same 32x32 grid as assets/logo.svg: a
-# lines-of-code curve rising off a muted axis. Tk can't render SVG, so we
-# redraw it on a Canvas from the same coordinates — keep the two in step if
-# either changes.
-_MARK_AXIS_PTS    = [(6, 4.5), (6, 26), (27.5, 26)]
-_MARK_CURVE_PTS   = [(9.5, 21.2), (14.8, 16.2), (19.2, 18.4), (25, 9.2)]
-_MARK_CURVE_WIDTH = 2.6
-
-
-def _make_mark(parent, size=34):
-    """Canvas widget holding the Repo Growth mark, drawn at `size` pixels."""
-    s = size / 32.0
-    canvas = tk.Canvas(
-        parent, width=size, height=size,
-        bg=BG, highlightthickness=0, bd=0,
-    )
-
-    def scaled(points):
-        return [c * s for pt in points for c in pt]
-
-    canvas.create_line(
-        *scaled(_MARK_AXIS_PTS),
-        fill=MARK_AXIS, width=max(1, 2.4 * s),
-        capstyle=tk.ROUND, joinstyle=tk.ROUND,
-    )
-    canvas.create_line(
-        *scaled(_MARK_CURVE_PTS),
-        fill=ACCENT, width=max(1, _MARK_CURVE_WIDTH * s),
-        capstyle=tk.ROUND, joinstyle=tk.ROUND,
-    )
-    return canvas
+# While the progress panel is up, everything behind it is recoloured toward
+# black by these factors (light, dark) — Tk has no translucent overlay.
+DIM = (0.72, 0.5)
 
 
-# The same mark as an icon file, for the window title bar, its dialogs and the
+def _dim_hex(colour, factor):
+    r, g, b = (int(colour[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02x%02x%02x" % (int(r * factor), int(g * factor), int(b * factor))
+
+
+# Font preferences, system UI first so the window reads as native: SF Pro on
+# macOS, Segoe UI Variable on Windows 11. Geist (bundled for the HTML pages)
+# is used when installed; Tk can't load a font file itself, so it can't be the
+# guaranteed fallback here the way it is in the pages.
+TEXT_CANDIDATES = [
+    "SF Pro Text", ".AppleSystemUIFont", "Segoe UI Variable Text", "Segoe UI",
+    "Geist", "Inter", "Cantarell", "Ubuntu", "DejaVu Sans", "Helvetica", "Arial",
+]
+DISPLAY_CANDIDATES = [
+    "SF Pro Display", ".AppleSystemUIFont", "Segoe UI Variable Display", "Segoe UI",
+    "Geist", "Inter", "Cantarell", "Ubuntu", "DejaVu Sans", "Helvetica", "Arial",
+]
+# Tk only knows normal and bold, so semibold means picking a family that is
+# semibold by name, and falling back to bold.
+SEMIBOLD_CANDIDATES = [
+    "Segoe UI Variable Text Semibold", "Segoe UI Semibold",
+]
+MONO_CANDIDATES = [
+    "SF Mono", "Menlo", "Cascadia Mono", "Consolas", "Geist Mono",
+    "DejaVu Sans Mono", "Courier New",
+]
+
+
+# The mark as an icon file, for the window title bar, its dialogs and the
 # taskbar. Tk can't render SVG, so assets/logo.ico and assets/logo.png are
 # rasterised from assets/logo.svg by tools/make_icons.py and committed.
 ICON_ICO = os.path.join(ASSETS_DIR, "logo.ico")
@@ -147,186 +161,170 @@ def _claim_taskbar_identity():
         pass  # an unrecognised shell just means the old grouping — not fatal
 
 
-def _apply_icon(root):
+def _apply_icon(window, default=True):
     """Put the mark on the title bar, the taskbar and every dialog.
 
-    Windows wants a real .ico; `default=` makes it the icon for Toplevels too,
-    so the About and update windows get it without repeating this. Elsewhere Tk
-    takes a PhotoImage, and iconphoto's `default` flag does the same job.
+    Windows wants a real .ico; `default=` makes it the icon for Toplevels too.
+    Elsewhere Tk takes a PhotoImage, and iconphoto's `default` flag does the
+    same job.
     """
     if sys.platform == "win32" and os.path.exists(ICON_ICO):
         try:
-            root.iconbitmap(default=ICON_ICO)
+            if default:
+                window.iconbitmap(default=ICON_ICO)
+            else:
+                window.iconbitmap(ICON_ICO)
             return
         except tk.TclError:
             pass
     if os.path.exists(ICON_PNG):
         try:
             image = tk.PhotoImage(file=ICON_PNG)
-            root.iconphoto(True, image)
-            root._icon_image = image  # Tk keeps no reference of its own
+            window.iconphoto(default, image)
+            window._icon_image = image  # Tk keeps no reference of its own
         except tk.TclError:
             pass
 
 
-def _pick_family(root, candidates):
+def _pick_family(root, candidates, fallback):
     available = set(tkfont.families(root))
     for fam in candidates:
         if fam in available:
             return fam
-    return candidates[-1]
+    return fallback
 
 
-def _configure_styles(root, sans, mono):
-    fonts = {
-        "base":      (sans, 10),
-        "small":     (sans, 9),
-        "bold":      (sans, 10, "bold"),
-        "header":    (sans, 26, "bold"),
-        "mono":      (mono, 10),
-        "mono_sub":  (mono, 9),
-        "tracked":   (mono, 9, "bold"),     # used for small uppercase section labels
-    }
+class _Fonts:
+    """The type scale, loosely after macOS: 13px body, 11-12px captions."""
 
-    style = ttk.Style(root)
-    style.theme_use("clam")
+    def __init__(self, root):
+        text = _pick_family(root, TEXT_CANDIDATES, "TkDefaultFont")
+        display = _pick_family(root, DISPLAY_CANDIDATES, text)
+        semibold = _pick_family(root, SEMIBOLD_CANDIDATES, None)
+        mono = _pick_family(root, MONO_CANDIDATES, "TkFixedFont")
 
-    style.configure("TFrame", background=BG)
+        def strong(size):
+            if semibold:
+                return ctk.CTkFont(semibold, size)
+            return ctk.CTkFont(text, size, "bold")
 
-    style.configure("TLabel",            background=BG, foreground=TEXT,   font=fonts["base"])
-    style.configure("Subtle.TLabel",     background=BG, foreground=MUTED,  font=fonts["small"])
-
-    # Two-tone header: "Repo" in accent green, " Growth" in text colour.
-    style.configure("Title.TLabel",       background=BG, foreground=TEXT,   font=fonts["header"])
-    style.configure("TitleAccent.TLabel", background=BG, foreground=ACCENT, font=fonts["header"])
-
-    # Matches the .chart-title style from template.html — small, uppercase,
-    # mono, tracked, muted. We fake letter-spacing by uppercasing the text.
-    style.configure("Tracked.TLabel",    background=BG, foreground=MUTED,  font=fonts["tracked"])
-
-    # Mono small muted — matches the web subtitle "branch: ... · ... commits".
-    style.configure("MonoSub.TLabel",    background=BG, foreground=MUTED,  font=fonts["mono_sub"])
-
-    # Clickable URL in the About box.
-    style.configure("Link.TLabel",       background=BG, foreground=ACCENT, font=fonts["mono_sub"])
-
-    style.configure("TEntry",
-        fieldbackground=SURFACE, foreground=TEXT,
-        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
-        insertcolor=TEXT, padding=7,
-    )
-    style.map("TEntry",
-        bordercolor=[("focus", ACCENT)],
-        lightcolor=[("focus", ACCENT)],
-        darkcolor=[("focus", ACCENT)],
-    )
-
-    style.configure("TCombobox",
-        fieldbackground=SURFACE, background=SURFACE, foreground=TEXT,
-        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
-        arrowcolor=TEXT, padding=5,
-        selectbackground=SURFACE, selectforeground=TEXT,
-    )
-    style.map("TCombobox",
-        fieldbackground=[("readonly", SURFACE)],
-        bordercolor=[("focus", ACCENT)],
-    )
-    root.option_add("*TCombobox*Listbox.background", SURFACE)
-    root.option_add("*TCombobox*Listbox.foreground", TEXT)
-    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-    root.option_add("*TCombobox*Listbox.selectForeground", "#0d0f14")
-    root.option_add("*TCombobox*Listbox.borderWidth", 0)
-    root.option_add("*TCombobox*Listbox.font", fonts["base"])
-
-    style.configure("TButton",
-        background=SURFACE, foreground=TEXT,
-        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
-        padding=(14, 7), font=fonts["base"], borderwidth=1,
-    )
-    style.map("TButton",
-        background=[("active", SURFACE_HI), ("pressed", SURFACE_HI), ("disabled", SURFACE)],
-        foreground=[("disabled", MUTED)],
-        bordercolor=[("active", ACCENT), ("focus", ACCENT)],
-    )
-
-    # Small secondary buttons — the quick date ranges sit just under the date
-    # entries, so they have to be much tighter than a normal button.
-    style.configure("Chip.TButton",
-        background=BG, foreground=MUTED,
-        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
-        padding=(9, 3), font=fonts["small"], borderwidth=1,
-    )
-    style.map("Chip.TButton",
-        background=[("active", SURFACE), ("pressed", SURFACE)],
-        foreground=[("active", TEXT)],
-        bordercolor=[("active", ACCENT), ("focus", ACCENT)],
-    )
-
-    # The chip matching the dates currently in the entries.
-    style.configure("ChipOn.TButton",
-        background=SURFACE_HI, foreground=ACCENT,
-        bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
-        padding=(9, 3), font=fonts["small"], borderwidth=1,
-    )
-    style.map("ChipOn.TButton",
-        background=[("active", SURFACE_HI), ("pressed", SURFACE_HI)],
-        foreground=[("active", ACCENT)],
-    )
-
-    style.configure("Accent.TButton",
-        background=ACCENT, foreground="#0d0f14",
-        bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
-        padding=(22, 9), font=fonts["bold"], borderwidth=0,
-    )
-    style.map("Accent.TButton",
-        background=[("active", ACCENT_HOVER), ("pressed", ACCENT_DOWN), ("disabled", BORDER)],
-        foreground=[("disabled", MUTED)],
-    )
-
-    style.configure("TCheckbutton",
-        background=BG, foreground=TEXT, font=fonts["base"],
-        indicatorcolor=SURFACE, indicatorrelief="flat",
-        focuscolor=BG, padding=(0, 2),
-    )
-    style.map("TCheckbutton",
-        background=[("active", BG)],
-        foreground=[("disabled", MUTED)],
-        indicatorcolor=[("selected", ACCENT), ("pressed", ACCENT_DOWN), ("!selected", SURFACE)],
-    )
-
-    style.configure("Horizontal.TProgressbar",
-        background=ACCENT, troughcolor=SURFACE, bordercolor=SURFACE,
-        lightcolor=ACCENT, darkcolor=ACCENT, borderwidth=0, thickness=4,
-    )
-
-    style.configure("Vertical.TScrollbar",
-        background=SURFACE, troughcolor=BG,
-        bordercolor=BG, lightcolor=SURFACE, darkcolor=SURFACE,
-        arrowcolor=MUTED, borderwidth=0, gripcount=0,
-    )
-    style.map("Vertical.TScrollbar",
-        background=[("active", BORDER), ("pressed", BORDER)],
-        arrowcolor=[("active", TEXT)],
-    )
-
-    return fonts
+        self.title    = ctk.CTkFont(display, 26, "bold")
+        self.heading  = ctk.CTkFont(display, 17, "bold")
+        self.body     = ctk.CTkFont(text, 13)
+        self.strong   = strong(13)
+        self.small    = ctk.CTkFont(text, 12)
+        self.section  = strong(12)
+        self.caption  = ctk.CTkFont(text, 11)
+        self.button   = strong(13)
+        self.segment  = ctk.CTkFont(text, 12)
+        self.mono     = ctk.CTkFont(mono, 11)
 
 
-def _menu(parent, fonts):
-    """A dropdown menu in the app's palette.
+class _Theme:
+    """Remembers which palette token each widget colour came from.
 
-    The menu *bar* strip is drawn by the window manager and largely ignores
-    these colours; the dropdowns that hang off it honour them.
+    That's what lets the form dim behind the progress panel: every registered
+    colour is re-resolved to a darker variant, then back again.
     """
-    return tk.Menu(
-        parent, tearoff=0,
-        bg=SURFACE, fg=TEXT,
-        activebackground=ACCENT, activeforeground=BG,
-        disabledforeground=MENU_DISABLED,
-        selectcolor=ACCENT,
-        borderwidth=0, activeborderwidth=0,
-        font=fonts["base"],
+
+    def __init__(self):
+        self.dimmed = False
+        self._paint = {}    # widget -> [dims, {option: token}]
+        self._images = {}   # label -> ((normal, dimmed), dims)
+
+    def color(self, token, dims=True):
+        pair = PALETTE[token]
+        if self.dimmed and dims:
+            return tuple(_dim_hex(c, f) for c, f in zip(pair, DIM))
+        return pair
+
+    def paint(self, widget, dims=True, **tokens):
+        entry = self._paint.setdefault(widget, [dims, {}])
+        entry[0] = dims
+        entry[1].update(tokens)
+        widget.configure(**{opt: self.color(tok, dims) for opt, tok in tokens.items()})
+        return widget
+
+    def image(self, label, art, dims=True):
+        self._images[label] = (art, dims)
+        label.configure(image=art[1] if (self.dimmed and dims) else art[0])
+
+    def set_dimmed(self, on):
+        self.dimmed = on
+        for widget, (dims, tokens) in self._paint.items():
+            if dims:
+                widget.configure(**{opt: self.color(tok) for opt, tok in tokens.items()})
+        for label, (art, dims) in self._images.items():
+            if dims:
+                label.configure(image=art[1] if on else art[0])
+
+
+def _art(light, dark, size):
+    """(normal, dimmed) CTkImages from a light- and a dark-theme drawing."""
+    normal = ctk.CTkImage(light_image=light, dark_image=dark, size=size)
+    dimmed = ctk.CTkImage(
+        light_image=gui_art.dim(light, DIM[0]),
+        dark_image=gui_art.dim(dark, DIM[1]),
+        size=size,
     )
+    return normal, dimmed
+
+
+def _repo_summary(path):
+    """(commit count, branch name) for the footer, or None if unreadable.
+
+    Counts the same branch analyse_repo will chart, so the number matches.
+    """
+    try:
+        import git
+        with git.Repo(path) as repo:
+            rev, name = _resolve_rev(repo)
+            return int(repo.git.rev_list("--count", rev)), name
+    except Exception:
+        return None
+
+
+def _ellipsize_path(path, limit=46):
+    """Shorten a long path from the middle, keeping the drive and the tail."""
+    if len(path) <= limit:
+        return path
+    head = path[: limit // 3]
+    tail = path[-(limit - len(head) - 1):]
+    return head + "…" + tail
+
+
+def _about_left(seconds):
+    if seconds < 5:
+        return "a few seconds left"
+    if seconds < 60:
+        n = int(round(seconds / 5) * 5) if seconds > 15 else int(round(seconds))
+        return f"about {n} seconds left"
+    if seconds < 90:
+        return "about a minute left"
+    return f"about {int(round(seconds / 60))} minutes left"
+
+
+def _took(seconds):
+    if seconds < 1:
+        return "Done in under a second"
+    if seconds < 60:
+        n = int(round(seconds))
+        return f"Done in {n} second{'s' if n != 1 else ''}"
+    m, s = divmod(int(round(seconds)), 60)
+    return f"Done in {m} min {s} s" if s else f"Done in {m} min"
+
+
+def _reveal(path):
+    """Show a file selected in Explorer / Finder, or open its folder."""
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", path])
+        else:
+            subprocess.Popen(["xdg-open", os.path.dirname(path)])
+    except Exception:
+        pass
 
 
 def _place_near(win, parent, dx=90, dy=90):
@@ -334,22 +332,27 @@ def _place_near(win, parent, dx=90, dy=90):
 
 
 def launch_gui():
+    build_gui().mainloop()
+
+
+def build_gui():
+    """Create the main window, ready for mainloop()."""
     # A portable self-update leaves the previous build renamed beside us.
     updater.cleanup_old_build()
 
     # Before the window exists — the taskbar reads it when the button is made.
     _claim_taskbar_identity()
 
-    root = tk.Tk()
+    ctk.set_appearance_mode("system")
+
+    root = ctk.CTk(fg_color=PALETTE["bg"])
     root.title("Repo Growth")
-    root.geometry("780x640")
-    root.minsize(620, 520)
-    root.configure(bg=BG)
+    root.geometry("760x812")
+    root.minsize(680, 800)
     _apply_icon(root)
 
-    sans = _pick_family(root, SANS_CANDIDATES)
-    mono = _pick_family(root, MONO_CANDIDATES)
-    fonts = _configure_styles(root, sans, mono)
+    fonts = _Fonts(root)
+    theme = _Theme()
 
     settings = _load_settings()
     detail = settings.get("detail", "Standard")
@@ -374,11 +377,15 @@ def launch_gui():
             "check_updates": updates_var.get(),
         })
 
-    # Paths to the most recently generated files, used by the two Open buttons.
+    # Paths to the most recently generated files, used by the Open buttons.
     last_output = {"static": "", "animated": ""}
 
-    # The running analysis' cancel event, or None when idle.
-    current_run = {"cancel": None}
+    # The running analysis' cancel event, or None when idle; plus what the
+    # progress panel needs to turn raw progress into "commit X of Y".
+    current_run = {"cancel": None, "start": 0.0, "total": None, "phase": "sample", "pct": 0.0}
+
+    # "ready", "running" or "done" — which face the footer shows.
+    ui_state = {"mode": "ready"}
 
     # The in-flight update check or download. Worker threads only ever put
     # messages on `msgs`; every Tk call below happens on the main thread.
@@ -392,16 +399,94 @@ def launch_gui():
     def report_pct(v):
         msgs.put(("pct", float(v)))
 
+    # ------------------------------------------------------------ building blocks
+
+    def label(parent, text="", font=None, token="text", **kw):
+        widget = ctk.CTkLabel(parent, text=text, font=font or fonts.body,
+                              fg_color="transparent", anchor="w", justify="left", **kw)
+        return theme.paint(widget, text_color=token)
+
+    def card(parent):
+        return theme.paint(ctk.CTkFrame(parent, corner_radius=12, border_width=0), fg_color="card")
+
+    def hairline(parent):
+        return theme.paint(ctk.CTkFrame(parent, height=1, corner_radius=0), fg_color="hairline")
+
+    def pill(parent, text, command, primary, dims=True, width=0):
+        button = ctk.CTkButton(parent, text=text, command=command, height=32,
+                               width=width or 0, corner_radius=16, border_width=0,
+                               font=fonts.button)
+        if primary:
+            return theme.paint(button, dims, fg_color="accent", hover_color="accent_hover",
+                               text_color="on_accent", text_color_disabled="on_accent")
+        return theme.paint(button, dims, fg_color="fill", hover_color="fill_hover",
+                           text_color="text", text_color_disabled="tertiary")
+
+    def link(parent, text, command, dims=True):
+        widget = ctk.CTkLabel(parent, text=text, font=fonts.small, fg_color="transparent",
+                              cursor="hand2")
+        widget.bind("<Button-1>", lambda _e: command())
+        return theme.paint(widget, dims, text_color="accent")
+
+    def field(parent, var, width=140):
+        entry = ctk.CTkEntry(parent, textvariable=var, width=width, height=30,
+                             corner_radius=8, border_width=1, font=fonts.body)
+        theme.paint(entry, fg_color="field", border_color="field_border", text_color="text")
+        focus_ring(entry, entry)
+        return entry
+
+    def focus_ring(entry, framed):
+        """Accent border while the field has focus, like a native text field."""
+        entry.bind("<FocusIn>", lambda _e: framed.configure(border_color=theme.color("accent")), add="+")
+        entry.bind("<FocusOut>", lambda _e: framed.configure(border_color=theme.color("field_border")), add="+")
+
+    def segmented(parent, values, variable, command=None):
+        seg = ctk.CTkSegmentedButton(parent, values=values, variable=variable, command=command,
+                                     height=28, corner_radius=8, border_width=2,
+                                     font=fonts.segment, dynamic_resizing=False)
+        return theme.paint(seg, fg_color="fill", selected_color="segment",
+                           selected_hover_color="segment", unselected_color="fill",
+                           unselected_hover_color="fill_hover", text_color="text",
+                           text_color_disabled="tertiary")
+
+    def section(parent, title):
+        label(parent, title, fonts.section, "secondary").pack(fill="x", padx=14, pady=(14, 4))
+        c = card(parent)
+        c.pack(fill="x")
+        return c
+
+    def row(parent, title, sub=None, divider=False):
+        """One label-left, control-right row of a grouped card; returns the control side."""
+        if divider:
+            hairline(parent).pack(fill="x", padx=16)
+        r = ctk.CTkFrame(parent, fg_color="transparent")
+        r.pack(fill="x", padx=16, pady=9)
+        r.grid_columnconfigure(0, minsize=150)
+        r.grid_columnconfigure(1, weight=1)
+        side = ctk.CTkFrame(r, fg_color="transparent")
+        side.grid(row=0, column=0, sticky="w")
+        label(side, title, fonts.body).pack(anchor="w")
+        if sub:
+            label(side, sub, fonts.caption, "tertiary").pack(anchor="w")
+        control = ctk.CTkFrame(r, fg_color="transparent")
+        control.grid(row=0, column=1, sticky="ew")
+        return control
+
+    # ------------------------------------------------------------ actions
+
     def pick_repo():
+        if ui_state["mode"] == "running":
+            return
         path = filedialog.askdirectory(title="Choose a Git repository")
         if path:
-            repo_var.set(path)
+            repo_var.set(os.path.normpath(path))
 
-    # Quick-range buttons, keyed by preset name (None = the All time button).
-    chip_btns = {}
+    PERIODS = [("All time", None), ("Last month", "month"), ("Last week", "week"),
+               ("Last day", "day"), ("Custom", "custom")]
+    period_var = tk.StringVar(value="All time")
 
     def set_range(preset):
-        """Fill the date entries from a quick range, or clear them for all time."""
+        """Fill the date fields from a quick range, or clear them for all time."""
         if preset is None:
             since_var.set("")
             until_var.set("")
@@ -410,23 +495,34 @@ def launch_gui():
         since_var.set(f"{since:{DATE_FORMAT}}")
         until_var.set(f"{until:{DATE_FORMAT}}")
 
-    def sync_chips(*_):
-        """Highlight whichever quick range the entries currently describe.
+    def on_period(choice):
+        preset = dict(PERIODS)[choice]
+        if preset == "custom":
+            since_entry.focus_set()
+        else:
+            set_range(preset)
 
-        Typing a date by hand drops the highlight, so the buttons never claim
+    def sync_period(*_):
+        """Select whichever period the date fields currently describe.
+
+        Typing a date by hand switches to Custom, so the control never claims
         a window the run won't actually use.
         """
         current = (since_var.get().strip(), until_var.get().strip())
-        for preset, btn in chip_btns.items():
+        match = "Custom"
+        for name, preset in PERIODS:
             if preset is None:
-                match = current == ("", "")
-            else:
+                if current == ("", ""):
+                    match = name
+            elif preset != "custom":
                 since, until = preset_range(preset)
-                match = current == (f"{since:{DATE_FORMAT}}", f"{until:{DATE_FORMAT}}")
-            btn.configure(style="ChipOn.TButton" if match else "Chip.TButton")
+                if current == (f"{since:{DATE_FORMAT}}", f"{until:{DATE_FORMAT}}"):
+                    match = name
+        if period_var.get() != match:
+            period_var.set(match)
 
-    since_var.trace_add("write", sync_chips)
-    until_var.trace_add("write", sync_chips)
+    since_var.trace_add("write", sync_period)
+    until_var.trace_add("write", sync_period)
 
     def open_path(key):
         path = last_output.get(key, "")
@@ -434,10 +530,12 @@ def launch_gui():
             webbrowser.open(f"file:///{os.path.abspath(path).replace(os.sep, '/')}")
 
     def write_log(text):
-        log_text.configure(state="normal")
-        log_text.insert("end", text)
-        log_text.see("end")
-        log_text.configure(state="disabled")
+        stamp = datetime.now().strftime("%H:%M:%S")
+        log_box.configure(state="normal")
+        for line in text.rstrip("\n").split("\n"):
+            log_box.insert("end", f"{stamp}  {line}\n")
+        log_box.see("end")
+        log_box.configure(state="disabled")
 
     def run():
         if current_run["cancel"] is not None:
@@ -501,17 +599,11 @@ def launch_gui():
 
         save_settings()
 
-        log_text.configure(state="normal")
-        log_text.delete("1.0", "end")
-        log_text.configure(state="disabled")
-        run_btn.configure(state="disabled")
-        cancel_btn.configure(state="normal")
-        open_static_btn.configure(state="disabled")
-        open_animated_btn.configure(state="disabled")
-        progress_bar.configure(value=0)
-
         cancel_event = threading.Event()
-        current_run["cancel"] = cancel_event
+        current_run.update(cancel=cancel_event, start=time.monotonic(),
+                           total=None, phase="sample", pct=0.0)
+        last_output.update(static="", animated="")
+        show_running(os.path.basename(os.path.abspath(repo_path)))
 
         def worker():
             try:
@@ -540,7 +632,8 @@ def launch_gui():
         if cancel_event is not None and not cancel_event.is_set():
             cancel_event.set()
             cancel_btn.configure(state="disabled")
-            write_log("Cancelling — waiting for the current step to finish...\n")
+            step_label.configure(text="Cancelling — finishing the current step…")
+            write_log("Cancelling — waiting for the current step to finish...")
         sync_menus()
 
     # What sync_menus last wrote, so it can skip writes that change nothing.
@@ -550,17 +643,167 @@ def launch_gui():
     menu_state = {}
 
     def sync_menus():
-        """Mirror the toolbar buttons' enabled state onto the File menu."""
-        for label, widget in (
-            ("Generate",               run_btn),
-            ("Cancel Analysis",        cancel_btn),
-            ("Open Static Dashboard",  open_static_btn),
-            ("Open Animated Story",    open_animated_btn),
+        """Mirror what the window currently offers onto the File menu."""
+        running = current_run["cancel"] is not None
+        cancelling = running and current_run["cancel"].is_set()
+        for entry_label, enabled in (
+            ("Generate",               not running),
+            ("Cancel Analysis",        running and not cancelling),
+            ("Open Static Dashboard",  bool(last_output["static"])),
+            ("Open Animated Story",    bool(last_output["animated"])),
         ):
-            state = str(widget["state"])
-            if menu_state.get(label) != state:
-                menu_state[label] = state
-                file_menu.entryconfigure(label, state=state)
+            state = "normal" if enabled else "disabled"
+            if menu_state.get(entry_label) != state:
+                menu_state[entry_label] = state
+                file_menu.entryconfigure(entry_label, state=state)
+
+    # ------------------------------------------------------------ progress text
+
+    def note_log(msg):
+        """Pick the progress panel's facts out of the analysis log."""
+        m = (re.search(r"-> ([\d,]+) data points", msg)
+             or re.search(r"Processing all ([\d,]+) commits", msg))
+        if m:
+            current_run["total"] = int(m.group(1).replace(",", ""))
+        elif msg.startswith("Calculating churn"):
+            current_run["phase"] = "churn"
+        elif msg.startswith("Chart saved to"):
+            current_run["phase"] = "write"
+
+    def step_text():
+        pct = current_run["pct"]
+        elapsed = time.monotonic() - current_run["start"]
+        eta = ""
+        if 0.02 <= pct < 1.0 and elapsed >= 1.0:
+            eta = _about_left(elapsed * (1.0 - pct) / pct)
+        total, phase = current_run["total"], current_run["phase"]
+        if phase == "sample" and total:
+            done = min(total, max(1, round(pct / SAMPLE_WEIGHT * total)))
+            head = f"Commit {done:,} of {total:,}"
+        elif phase == "churn":
+            head = "Comparing commits"
+        elif phase == "write" or pct >= 1.0:
+            head = "Writing the pages"
+        else:
+            head = "Reading the history"
+        return f"{head} · {eta}" if eta else head
+
+    def show_pct(pct):
+        current_run["pct"] = pct
+        progress.set(pct)
+        pct_label.configure(text=f"{int(pct * 100)}%")
+        if not current_run["cancel"] or not current_run["cancel"].is_set():
+            step_label.configure(text=step_text())
+
+    # ------------------------------------------------------------ the three states
+
+    inputs = []   # everything the user can change, disabled while running
+
+    def set_inputs(state):
+        for widget in inputs:
+            widget.configure(state=state)
+
+    def show_running(repo_name):
+        ui_state["mode"] = "running"
+        log_box.configure(state="normal")
+        log_box.delete("1.0", "end")
+        log_box.configure(state="disabled")
+        if len(repo_name) > 30:
+            repo_name = repo_name[:29] + "…"
+        title_label.configure(text=f"Analysing {repo_name}")
+        step_label.configure(text="Reading the history")
+        progress.set(0)
+        pct_label.configure(text="0%")
+        cancel_btn.configure(state="normal")
+        set_inputs("disabled")
+        generate_btn.configure(state="disabled")
+        theme.set_dimmed(True)
+        panel.place(relx=0.5, rely=0.47, anchor="center")
+        panel.lift()
+        sync_menus()
+
+    def hide_running():
+        panel.place_forget()
+        theme.set_dimmed(False)
+        set_inputs("normal")
+        generate_btn.configure(state="normal")
+        current_run["cancel"] = None
+
+    def show_ready(*_):
+        if ui_state["mode"] == "running":
+            return
+        ui_state["mode"] = "ready"
+        tick.pack_forget()
+        done_links.pack_forget()
+        status_sub.pack(side="left")
+        status_title.configure(text="Ready")
+        for b in (open_story_btn, open_dash_btn):
+            b.pack_forget()
+        generate_btn.pack(side="right")
+        refresh_summary()
+
+    def show_done(seconds):
+        ui_state["mode"] = "done"
+        tick.pack(side="left", padx=(0, 10), before=status_texts)
+        status_title.configure(text=_took(seconds))
+        status_sub.pack_forget()
+        done_links.pack(side="left")
+        generate_btn.pack_forget()
+        # The dashboard is the primary result; with only one output, that one
+        # takes the primary style.
+        dash, story = last_output["static"], last_output["animated"]
+        theme.paint(open_story_btn, **(_PRIMARY if not dash else _SECONDARY))
+        if dash:
+            open_dash_btn.pack(side="right")
+        if story:
+            open_story_btn.pack(side="right", padx=(0, 8) if dash else 0)
+
+    _PRIMARY = dict(fg_color="accent", hover_color="accent_hover",
+                    text_color="on_accent", text_color_disabled="on_accent")
+    _SECONDARY = dict(fg_color="fill", hover_color="fill_hover",
+                      text_color="text", text_color_disabled="tertiary")
+
+    def show_in_folder():
+        path = last_output["static"] or last_output["animated"]
+        if path and os.path.exists(path):
+            _reveal(path)
+
+    # Footer status line — refreshed off the UI thread, since counting commits
+    # on a large repo can take a moment. The token drops stale answers.
+    summary = {"token": 0}
+
+    def refresh_summary(*_):
+        summary["token"] += 1
+        token = summary["token"]
+        root.after(300, lambda: start_summary(token))
+
+    def start_summary(token):
+        if token != summary["token"] or ui_state["mode"] != "ready":
+            return
+        path = repo_var.get().strip()
+        if not path:
+            status_sub.configure(text="Choose a repository to begin")
+            return
+        if not os.path.isdir(path):
+            status_sub.configure(text="That folder doesn't exist")
+            return
+        saves = _ellipsize_path(os.path.join(path, "Repo Growth") + os.sep)
+        status_sub.configure(text=f"Saves to {saves}")
+
+        def worker():
+            msgs.put(("summary", (token, saves, _repo_summary(path))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_summary(token, saves, info):
+        if token != summary["token"] or ui_state["mode"] != "ready":
+            return
+        if info is None:
+            status_sub.configure(text=f"Saves to {saves} · not a Git repository?")
+            return
+        count, branch = info
+        status_sub.configure(
+            text=f"Saves to {saves} · {count:,} commit{'s' if count != 1 else ''} on {branch}")
 
     # ------------------------------------------------------------ updates
 
@@ -572,7 +815,7 @@ def launch_gui():
             return
         update_run["busy"] = True
         if manual:
-            write_log("Checking for updates...\n")
+            write_log("Checking for updates...")
 
         def worker():
             try:
@@ -620,28 +863,45 @@ def launch_gui():
         ):
             start_download(asset, mode)
 
+    def dialog(title):
+        """A themed Toplevel with our icon rather than CustomTkinter's."""
+        win = ctk.CTkToplevel(root)
+        win.title(title)
+        win.resizable(False, False)
+        win.transient(root)
+        theme.paint(win, False, fg_color="bg")
+        # CTkToplevel sets its own icon shortly after opening unless one has
+        # been set explicitly.
+        _apply_icon(win, default=False)
+        return win
+
+    def grab(win):
+        """grab_set once the window is actually mapped — before that it fails."""
+        def attempt():
+            try:
+                win.grab_set()
+            except tk.TclError:
+                win.after(50, attempt)
+        win.after(10, attempt)
+
     def start_download(asset, mode):
         cancel = threading.Event()
 
-        win = tk.Toplevel(root)
-        win.title("Updating Repo Growth")
-        win.configure(bg=BG)
-        win.resizable(False, False)
-        win.transient(root)
+        win = dialog("Updating Repo Growth")
         _place_near(win, root, 110, 150)
         win.protocol("WM_DELETE_WINDOW", cancel.set)
 
-        body = ttk.Frame(win, padding=(26, 22))
-        body.pack(fill="both", expand=True)
-        ttk.Label(body, text=f"Downloading {asset.get('name', 'update')}…").pack(anchor="w")
-        ttk.Label(
-            body, text="Repo Growth will restart once it's installed.",
-            style="Subtle.TLabel",
-        ).pack(anchor="w", pady=(4, 0))
-        bar = ttk.Progressbar(body, mode="determinate", maximum=100, length=360)
-        bar.pack(fill="x", pady=(16, 14))
-        ttk.Button(body, text="Cancel", command=cancel.set).pack(anchor="e")
-        win.grab_set()
+        body = ctk.CTkFrame(win, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=26, pady=22)
+        label(body, f"Downloading {asset.get('name', 'update')}…", fonts.strong).pack(anchor="w")
+        label(body, "Repo Growth will restart once it's installed.", fonts.small, "secondary") \
+            .pack(anchor="w", pady=(2, 0))
+        bar = ctk.CTkProgressBar(body, width=360, height=4, corner_radius=2)
+        theme.paint(bar, False, fg_color="fill", progress_color="accent")
+        bar.set(0)
+        bar.pack(fill="x", pady=(16, 16))
+        pill(body, "Cancel", cancel.set, primary=False, dims=False, width=88).pack(anchor="e")
+        grab(win)
 
         update_run.update(busy=True, cancel=cancel, window=win, bar=bar)
 
@@ -686,227 +946,331 @@ def launch_gui():
         if message and manual:
             messagebox.showerror("Repo Growth", message)
         elif message:
-            write_log(f"Update check failed: {message}\n")
+            write_log(f"Update check failed: {message}")
 
     def show_about():
-        win = tk.Toplevel(root)
-        win.title("About Repo Growth")
-        win.configure(bg=BG)
-        win.resizable(False, False)
-        win.transient(root)
+        win = dialog("About Repo Growth")
         _place_near(win, root)
 
-        body = ttk.Frame(win, padding=(30, 26))
-        body.pack(fill="both", expand=True)
+        body = ctk.CTkFrame(win, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=30, pady=26)
 
-        name_row = ttk.Frame(body)
-        name_row.pack(anchor="w")
-        ttk.Label(name_row, text="Repo",    style="TitleAccent.TLabel").pack(side="left")
-        ttk.Label(name_row, text=" Growth", style="Title.TLabel").pack(side="left")
-
-        ttk.Label(body, text=f"version {__version__}", style="MonoSub.TLabel") \
-            .pack(anchor="w", pady=(6, 18))
-        ttk.Label(
+        mark = ctk.CTkLabel(body, text="", image=logo_small[0])
+        mark.pack(anchor="w")
+        label(body, "Repo Growth", fonts.heading).pack(anchor="w", pady=(12, 0))
+        label(body, f"Version {__version__}", fonts.small, "secondary").pack(anchor="w", pady=(0, 14))
+        label(
             body,
-            text="Visualise how a git repository has grown over time.\n"
-                 "Everything runs on your machine — the charts it writes\n"
-                 "make no network requests at all.",
+            "See how a Git repository has grown over time.\n"
+            "Everything runs on this computer — the pages it writes\n"
+            "make no network requests at all.",
+            fonts.body,
         ).pack(anchor="w")
+        link(body, updater.PROJECT_PAGE, lambda: webbrowser.open(updater.PROJECT_PAGE), dims=False) \
+            .pack(anchor="w", pady=(12, 22))
 
-        link = ttk.Label(body, text=updater.PROJECT_PAGE, style="Link.TLabel", cursor="hand2")
-        link.pack(anchor="w", pady=(14, 22))
-        link.bind("<Button-1>", lambda _e: webbrowser.open(updater.PROJECT_PAGE))
-
-        buttons = ttk.Frame(body)
+        buttons = ctk.CTkFrame(body, fg_color="transparent")
         buttons.pack(anchor="e")
-        ttk.Button(
-            buttons, text="Check for Updates",
-            command=lambda: (win.destroy(), check_for_updates(True)),
-        ).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Close", style="Accent.TButton", command=win.destroy) \
-            .pack(side="left")
+        pill(buttons, "Check for Updates", lambda: (win.destroy(), check_for_updates(True)),
+             primary=False, dims=False).pack(side="left", padx=(0, 8))
+        pill(buttons, "Close", win.destroy, primary=True, dims=False, width=80).pack(side="left")
 
     def poll():
         try:
             while True:
                 kind, payload = msgs.get_nowait()
                 if kind == "log":
-                    write_log(payload + "\n")
+                    write_log(payload)
+                    note_log(payload)
                 elif kind == "pct":
-                    progress_bar.configure(value=payload * 100)
+                    show_pct(payload)
                 elif kind == "done":
-                    progress_bar.configure(value=100)
-                    run_btn.configure(state="normal")
-                    cancel_btn.configure(state="disabled")
-                    current_run["cancel"] = None
+                    seconds = time.monotonic() - current_run["start"]
+                    show_pct(1.0)
                     last_output["static"]   = payload.get("static", "")
                     last_output["animated"] = payload.get("animated", "")
-                    open_static_btn.configure(
-                        state=("normal" if last_output["static"] else "disabled")
-                    )
-                    open_animated_btn.configure(
-                        state=("normal" if last_output["animated"] else "disabled")
-                    )
                     parts = [p for p in (last_output["static"], last_output["animated"]) if p]
-                    write_log("\nDone — saved to:\n  " + "\n  ".join(parts) + "\n")
+                    write_log("Done — saved to:\n  " + "\n  ".join(parts))
+                    hide_running()
+                    show_done(seconds)
                 elif kind == "cancelled":
-                    progress_bar.configure(value=0)
-                    run_btn.configure(state="normal")
-                    cancel_btn.configure(state="disabled")
-                    current_run["cancel"] = None
-                    write_log("\nCancelled.\n")
+                    write_log("Cancelled.")
+                    hide_running()
+                    show_ready()
+                    status_title.configure(text="Cancelled")
                 elif kind == "error":
-                    progress_bar.configure(value=0)
-                    run_btn.configure(state="normal")
-                    cancel_btn.configure(state="disabled")
-                    current_run["cancel"] = None
-                    write_log(f"\nERROR: {payload}\n")
+                    write_log(f"ERROR: {payload}")
+                    hide_running()
+                    show_ready()
+                    status_title.configure(text="Something went wrong")
                     messagebox.showerror("Repo Growth", payload)
+                elif kind == "summary":
+                    on_summary(*payload)
                 elif kind == "update_found":
                     on_update_found(*payload)
                 elif kind == "update_pct":
                     bar = update_run.get("bar")
                     if bar is not None:
-                        bar.configure(value=payload * 100)
+                        bar.set(payload)
                 elif kind == "update_ready":
                     on_update_ready(*payload)
                 elif kind == "update_failed":
                     on_update_failed(*payload)
         except queue.Empty:
             pass
+        # The ETA ticks down between progress callbacks too.
+        if current_run["cancel"] is not None and not current_run["cancel"].is_set():
+            step_label.configure(text=step_text())
         sync_menus()
         root.after(100, poll)
 
-    outer = ttk.Frame(root, padding=(28, 24, 28, 20))
-    outer.pack(fill="both", expand=True)
-    outer.columnconfigure(0, weight=1)
+    # ------------------------------------------------------------ artwork
 
-    title_row = ttk.Frame(outer)
-    title_row.grid(row=0, column=0, sticky="w")
-    _make_mark(title_row, 40).pack(side="left", padx=(0, 13))
-    ttk.Label(title_row, text="Repo",   style="TitleAccent.TLabel").pack(side="left")
-    ttk.Label(title_row, text=" Growth", style="Title.TLabel").pack(side="left")
-    ttk.Label(
-        outer,
-        text="visualise how a git repository has grown over time  ·  local repos only"
-             f"  ·  v{__version__}",
-        style="MonoSub.TLabel",
-    ).grid(row=1, column=0, sticky="w", pady=(8, 24))
+    def tile_art(size):
+        img = gui_art.mark_tile(size)
+        return _art(img, gui_art.mark_tile(size, border=False), (size, size))
 
-    form = ttk.Frame(outer)
-    form.grid(row=2, column=0, sticky="ew")
-    form.columnconfigure(1, weight=1)
+    logo_large = tile_art(56)
+    logo_small = tile_art(40)
+    folder = _art(gui_art.folder_icon(16, PALETTE["secondary"][0]),
+                  gui_art.folder_icon(16, PALETTE["secondary"][1]), (16, 16))
+    checks = {
+        on: _art(gui_art.check_circle(20, on, PALETTE["accent"][0], PALETTE["field_border"][0],
+                                      PALETTE["on_accent"][0]),
+                 gui_art.check_circle(20, on, PALETTE["accent"][1], PALETTE["field_border"][1],
+                                      PALETTE["on_accent"][1]), (20, 20))
+        for on in (True, False)
+    }
+    done_tick = _art(gui_art.tick_badge(22, PALETTE["accent"][0], PALETTE["on_accent"][0]),
+                     gui_art.tick_badge(22, PALETTE["accent"][1], PALETTE["on_accent"][1]), (22, 22))
+    PREVIEW = (92, 60)
+    previews = {
+        "static": _art(
+            gui_art.dashboard_preview(*PREVIEW, False, CHART_BLUE[0], CHART_ORANGE[0], CHART_PURPLE[0]),
+            gui_art.dashboard_preview(*PREVIEW, True, CHART_BLUE[1], CHART_ORANGE[1], CHART_PURPLE[1]),
+            PREVIEW),
+        # The story itself is always dark, so its preview is too.
+        "animated": _art(gui_art.story_preview(*PREVIEW, CHART_BLUE[1]),
+                         gui_art.story_preview(*PREVIEW, CHART_BLUE[1]), PREVIEW),
+    }
 
-    r = 0
-    ttk.Label(form, text="REPOSITORY", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    repo_entry = ttk.Entry(form, textvariable=repo_var)
-    repo_entry.grid(row=r, column=1, sticky="ew", pady=(0, 4))
-    ttk.Button(form, text="Browse…", command=pick_repo).grid(row=r, column=2, padx=(8, 0), pady=(0, 4))
-    r += 1
-    ttk.Label(form, text="the local git repository you want to chart", style="Subtle.TLabel") \
-        .grid(row=r, column=1, sticky="w", pady=(0, 16))
-    r += 1
+    # ------------------------------------------------------------ footer
+    # Packed before the form so it keeps its place when the window is short.
 
-    ttk.Label(form, text="EXCLUDE FOLDERS", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    exclude_entry = ttk.Entry(form, textvariable=exclude_var)
-    exclude_entry.grid(row=r, column=1, sticky="ew", pady=(0, 4))
-    r += 1
-    ttk.Label(form, text="comma-separated folder names to leave out, at any depth  ·  e.g. tests, fixtures  ·  blank charts everything", style="Subtle.TLabel") \
-        .grid(row=r, column=1, sticky="w", pady=(0, 16))
-    r += 1
+    footer = theme.paint(ctk.CTkFrame(root, corner_radius=0, height=68), fg_color="card")
+    footer.pack(side="bottom", fill="x")
+    footer.pack_propagate(False)
+    hairline(root).pack(side="bottom", fill="x")
 
-    ttk.Label(form, text="DATE RANGE", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    range_frame = ttk.Frame(form)
-    range_frame.grid(row=r, column=1, sticky="w", pady=(0, 6))
-    ttk.Entry(range_frame, textvariable=since_var, width=11).pack(side="left")
-    ttk.Label(range_frame, text="→", style="Subtle.TLabel").pack(side="left", padx=7)
-    ttk.Entry(range_frame, textvariable=until_var, width=11).pack(side="left")
-    r += 1
-    # The quick ranges sit on their own row: four of them alongside the two
-    # entries overflow the window at its default width.
-    chips_frame = ttk.Frame(form)
-    chips_frame.grid(row=r, column=1, sticky="w", pady=(0, 4))
-    for chip_text, chip_preset in (("Last day", "day"), ("Last week", "week"),
-                                   ("Last month", "month"), ("All time", None)):
-        chip = ttk.Button(chips_frame, text=chip_text, style="Chip.TButton",
-                          command=lambda k=chip_preset: set_range(k))
-        chip.pack(side="left", padx=(0, 6))
-        chip_btns[chip_preset] = chip
-    sync_chips()
-    r += 1
-    ttk.Label(form, text="from → to as YYYY-MM-DD  ·  either side may be blank  ·  blank charts everything", style="Subtle.TLabel")         .grid(row=r, column=1, sticky="w", pady=(0, 16))
-    r += 1
+    status = ctk.CTkFrame(footer, fg_color="transparent")
+    status.pack(side="left", padx=(28, 0))
+    tick = ctk.CTkLabel(status, text="")
+    theme.image(tick, done_tick)
+    status_texts = ctk.CTkFrame(status, fg_color="transparent")
+    status_texts.pack(side="left")
+    status_title = label(status_texts, "Ready", fonts.strong)
+    status_title.pack(anchor="w")
+    status_line = ctk.CTkFrame(status_texts, fg_color="transparent")
+    status_line.pack(anchor="w")
+    status_sub = label(status_line, "", fonts.small, "secondary")
+    status_sub.pack(side="left")
+    done_links = ctk.CTkFrame(status_line, fg_color="transparent")
+    link(done_links, "Show in folder", show_in_folder).pack(side="left")
+    label(done_links, "  ·  ", fonts.small, "tertiary").pack(side="left")
+    link(done_links, "Generate again", run).pack(side="left")
 
-    ttk.Label(form, text="DETAIL LEVEL", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    detail_combo = ttk.Combobox(
-        form, textvariable=detail_var,
-        values=list(DETAIL_TARGETS.keys()), state="readonly",
-    )
-    detail_combo.grid(row=r, column=1, sticky="ew", pady=(0, 4))
-    r += 1
-    ttk.Label(
-        form,
-        text=f"target data points  ·  rough ~{DETAIL_TARGETS['Rough']}  ·  standard ~{DETAIL_TARGETS['Standard']}  ·  detailed ~{DETAIL_TARGETS['Detailed']}  ·  full = every commit",
-        style="Subtle.TLabel",
-    ).grid(row=r, column=1, sticky="w", pady=(0, 16))
-    r += 1
+    actions = ctk.CTkFrame(footer, fg_color="transparent")
+    actions.pack(side="right", padx=(0, 28))
+    generate_btn = pill(actions, "Generate", run, primary=True, width=112)
+    generate_btn.pack(side="right")
+    open_dash_btn = pill(actions, "Open Dashboard", lambda: open_path("static"), primary=True)
+    open_story_btn = pill(actions, "Open Story", lambda: open_path("animated"), primary=False)
 
-    ttk.Label(form, text="OUTPUTS", style="Tracked.TLabel").grid(row=r, column=0, sticky="w", padx=(0, 14), pady=(0, 4))
-    outputs_frame = ttk.Frame(form)
-    outputs_frame.grid(row=r, column=1, sticky="w", pady=(0, 4))
-    ttk.Checkbutton(outputs_frame, text="Static dashboard", variable=static_var).pack(side="left", padx=(0, 18))
-    ttk.Checkbutton(outputs_frame, text="Animated story",   variable=animated_var).pack(side="left")
-    r += 1
-    ttk.Label(
-        form,
-        text="saved to  <repo>/Repo Growth/  with a date-stamped filename",
-        style="Subtle.TLabel",
-    ).grid(row=r, column=1, sticky="w", pady=(0, 22))
+    # ------------------------------------------------------------ form
 
-    actions = ttk.Frame(outer)
-    actions.grid(row=3, column=0, sticky="ew", pady=(0, 14))
-    run_btn = ttk.Button(actions, text="Generate", style="Accent.TButton", command=run)
-    run_btn.pack(side="left")
-    cancel_btn = ttk.Button(actions, text="Cancel", command=cancel_run, state="disabled")
-    cancel_btn.pack(side="left", padx=(10, 0))
-    open_static_btn = ttk.Button(
-        actions, text="Open Static",
-        command=lambda: open_path("static"), state="disabled",
-    )
-    open_static_btn.pack(side="left", padx=(10, 0))
-    open_animated_btn = ttk.Button(
-        actions, text="Open Animated",
-        command=lambda: open_path("animated"), state="disabled",
-    )
-    open_animated_btn.pack(side="left", padx=(8, 0))
+    body = ctk.CTkFrame(root, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=28, pady=(22, 16))
 
-    progress_bar = ttk.Progressbar(outer, mode="determinate", maximum=100, value=0)
-    progress_bar.grid(row=4, column=0, sticky="ew", pady=(0, 14))
+    header = ctk.CTkFrame(body, fg_color="transparent")
+    header.pack(fill="x")
+    logo = ctk.CTkLabel(header, text="")
+    theme.image(logo, logo_large)
+    logo.pack(side="left", padx=(0, 16))
+    header_text = ctk.CTkFrame(header, fg_color="transparent")
+    header_text.pack(side="left", fill="x")
+    label(header_text, "Repo Growth", fonts.title).pack(anchor="w")
+    label(header_text, "See how a Git repository has grown over time. Runs entirely on this computer.",
+          fonts.body, "secondary").pack(anchor="w")
 
-    log_frame = ttk.Frame(outer)
-    log_frame.grid(row=5, column=0, sticky="nsew")
-    log_frame.columnconfigure(0, weight=1)
-    log_frame.rowconfigure(0, weight=1)
-    outer.rowconfigure(5, weight=1)
+    # Source
+    src = section(body, "Source")
+    ctl = row(src, "Repository")
+    ctl.grid_columnconfigure(0, weight=1)
+    path_box = theme.paint(ctk.CTkFrame(ctl, corner_radius=8, border_width=1, height=30),
+                           fg_color="field", border_color="field_border")
+    path_box.grid(row=0, column=0, sticky="ew")
+    folder_label = ctk.CTkLabel(path_box, text="", width=16)
+    theme.image(folder_label, folder)
+    folder_label.pack(side="left", padx=(9, 0))
+    repo_entry = ctk.CTkEntry(path_box, textvariable=repo_var, height=26, border_width=0,
+                              corner_radius=6, font=fonts.body)
+    theme.paint(repo_entry, fg_color="field", text_color="text")
+    repo_entry.pack(side="left", fill="x", expand=True, padx=(2, 3), pady=2)
+    focus_ring(repo_entry, path_box)
+    choose_btn = pill(ctl, "Choose…", pick_repo, primary=False, width=88)
+    choose_btn.configure(height=30, corner_radius=15)
+    choose_btn.grid(row=0, column=1, padx=(8, 0))
 
-    log_text = tk.Text(
-        log_frame,
-        wrap="word", state="disabled", font=fonts["mono"],
-        bg=SURFACE, fg=TEXT, insertbackground=TEXT,
-        selectbackground=BORDER, selectforeground=TEXT,
-        relief="flat", borderwidth=0,
-        highlightthickness=1, highlightbackground=BORDER, highlightcolor=BORDER,
-        padx=12, pady=10,
-    )
-    log_scroll = ttk.Scrollbar(log_frame, command=log_text.yview)
-    log_text.configure(yscrollcommand=log_scroll.set)
-    log_text.grid(row=0, column=0, sticky="nsew")
-    log_scroll.grid(row=0, column=1, sticky="ns")
+    ctl = row(src, "Exclude folders", "Comma-separated, any depth", divider=True)
+    exclude_entry = field(ctl, exclude_var)
+    exclude_entry.pack(fill="x")
 
-    # Built last so its commands can reference the buttons they mirror.
-    menubar = _menu(root, fonts)
+    # Range
+    rng = section(body, "Range")
+    ctl = row(rng, "Period")
+    period_seg = segmented(ctl, [name for name, _ in PERIODS], period_var, on_period)
+    period_seg.pack(fill="x")
+    ctl = row(rng, "Custom dates", "Either side can be left open", divider=True)
+    since_entry = field(ctl, since_var, width=118)
+    since_entry.pack(side="left")
+    label(ctl, "to", fonts.body, "secondary").pack(side="left", padx=10)
+    until_entry = field(ctl, until_var, width=118)
+    until_entry.pack(side="left")
+    label(ctl, "YYYY-MM-DD", fonts.caption, "tertiary").pack(side="left", padx=(12, 0))
+    sync_period()
 
-    file_menu = _menu(menubar, fonts)
+    # Analysis
+    ana = section(body, "Analysis")
+    ctl = row(ana, "Detail")
+    detail_seg = segmented(ctl, list(DETAIL_TARGETS.keys()), detail_var,
+                           lambda _v: update_detail_caption())
+    detail_seg.pack(fill="x")
+    detail_caption = label(ctl, "", fonts.caption, "secondary")
+    detail_caption.pack(anchor="w", pady=(6, 0))
+
+    def update_detail_caption(*_):
+        level = detail_var.get()
+        target = DETAIL_TARGETS.get(level, 300)
+        text = {
+            "Rough":    f"About {target:,} points · fastest",
+            "Standard": f"About {target:,} points · balanced",
+            "Detailed": f"About {target:,} points · finer curves, slower",
+        }.get(level, "Every commit · slowest on a long history")
+        detail_caption.configure(text=text)
+
+    detail_var.trace_add("write", update_detail_caption)
+    update_detail_caption()
+
+    # Create
+    label(body, "Create", fonts.section, "secondary").pack(fill="x", padx=14, pady=(14, 4))
+    tiles_row = ctk.CTkFrame(body, fg_color="transparent")
+    tiles_row.pack(fill="x")
+    tiles_row.grid_columnconfigure((0, 1), weight=1, uniform="tiles")
+
+    def output_tile(column, key, var, title, sub):
+        tile = theme.paint(ctk.CTkFrame(tiles_row, corner_radius=12, border_width=2),
+                           fg_color="card", border_color="hairline")
+        tile.grid(row=0, column=column, sticky="ew", padx=(0, 6) if column == 0 else (6, 0))
+        tile.grid_columnconfigure(1, weight=1)
+        preview = ctk.CTkLabel(tile, text="")
+        theme.image(preview, previews[key])
+        preview.grid(row=0, column=0, rowspan=2, padx=(12, 12), pady=12)
+        label(tile, title, fonts.strong).grid(row=0, column=1, sticky="sw", pady=(0, 0))
+        label(tile, sub, fonts.small, "secondary").grid(row=1, column=1, sticky="nw")
+        check = ctk.CTkLabel(tile, text="")
+        check.grid(row=0, column=2, rowspan=2, sticky="ne", padx=12, pady=12)
+
+        def refresh(*_):
+            on = var.get()
+            theme.image(check, checks[on])
+            theme.paint(tile, border_color="accent" if on else "hairline")
+
+        def toggle(_e=None):
+            if ui_state["mode"] != "running":
+                var.set(not var.get())
+
+        def bind_all(widget):
+            widget.bind("<Button-1>", toggle)
+            try:
+                widget.configure(cursor="hand2")
+            except (tk.TclError, ValueError):
+                pass
+            for child in widget.winfo_children():
+                bind_all(child)
+
+        bind_all(tile)
+        var.trace_add("write", refresh)
+        refresh()
+
+    output_tile(0, "static", static_var, "Dashboard", "Every chart on one page")
+    output_tile(1, "animated", animated_var, "Story", "Scroll-through replay")
+
+    inputs.extend([repo_entry, choose_btn, exclude_entry, period_seg,
+                   since_entry, until_entry, detail_seg])
+
+    # ------------------------------------------------------------ progress panel
+    # Placed over the dimmed form while a run is going. Its colours are
+    # registered with dims=False so it stays bright.
+
+    panel = theme.paint(ctk.CTkFrame(root, corner_radius=14, border_width=1), False,
+                        fg_color="card", border_color="hairline")
+    inner = ctk.CTkFrame(panel, fg_color="transparent")
+    inner.pack(fill="both", expand=True, padx=26, pady=24)
+    # Holds the panel at a steady width; CustomTkinter won't take one in place().
+    ctk.CTkFrame(inner, width=408, height=0, fg_color="transparent").pack()
+    head = ctk.CTkFrame(inner, fg_color="transparent")
+    head.pack(fill="x")
+    ctk.CTkLabel(head, text="", image=logo_small[0]).pack(side="left", padx=(0, 14))
+    head_text = ctk.CTkFrame(head, fg_color="transparent")
+    head_text.pack(side="left", fill="x", expand=True)
+    title_label = theme.paint(ctk.CTkLabel(head_text, text="", font=fonts.heading, anchor="w",
+                                           fg_color="transparent"), False, text_color="text")
+    title_label.pack(anchor="w", fill="x")
+    step_label = theme.paint(ctk.CTkLabel(head_text, text="", font=fonts.small, anchor="w",
+                                          fg_color="transparent"), False, text_color="secondary")
+    step_label.pack(anchor="w", fill="x")
+
+    bar_row = ctk.CTkFrame(inner, fg_color="transparent")
+    bar_row.pack(fill="x", pady=(18, 0))
+    pct_label = theme.paint(ctk.CTkLabel(bar_row, text="0%", font=fonts.small, width=40, anchor="e",
+                                         fg_color="transparent"), False, text_color="secondary")
+    pct_label.pack(side="right")
+    progress = theme.paint(ctk.CTkProgressBar(bar_row, height=4, corner_radius=2), False,
+                           fg_color="fill", progress_color="accent")
+    progress.set(0)
+    progress.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+    foot = ctk.CTkFrame(inner, fg_color="transparent")
+    foot.pack(fill="x", pady=(16, 0))
+    details_open = {"on": False}
+
+    def toggle_details():
+        details_open["on"] = not details_open["on"]
+        details_btn.configure(text=("⌄  Details" if details_open["on"] else "›  Details"))
+        if details_open["on"]:
+            log_box.pack(fill="x", pady=(12, 0))
+        else:
+            log_box.pack_forget()
+
+    details_btn = theme.paint(
+        ctk.CTkButton(foot, text="›  Details", command=toggle_details, width=0, height=28,
+                      corner_radius=8, border_width=0, font=fonts.small, anchor="w"),
+        False, fg_color="card", hover_color="fill", text_color="secondary")
+    details_btn.pack(side="left")
+    cancel_btn = pill(foot, "Cancel", cancel_run, primary=False, dims=False, width=88)
+    cancel_btn.pack(side="right")
+    log_box = theme.paint(
+        ctk.CTkTextbox(inner, height=150, corner_radius=8, border_width=0, font=fonts.mono,
+                       wrap="word", state="disabled"),
+        False, fg_color="well", text_color="secondary")
+
+    # ------------------------------------------------------------ menus
+    # Built last so sync_menus has everything it mirrors. Native menus follow
+    # the OS look on their own, so they get no colours of ours.
+
+    menubar = tk.Menu(root, tearoff=0)
+
+    file_menu = tk.Menu(menubar, tearoff=0)
     file_menu.add_command(label="Choose Repository…", accelerator="Ctrl+O", command=pick_repo)
     file_menu.add_separator()
     file_menu.add_command(label="Generate", accelerator="Ctrl+G", command=run)
@@ -920,7 +1284,7 @@ def launch_gui():
     file_menu.add_command(label="Exit", accelerator="Alt+F4", command=root.destroy)
     menubar.add_cascade(label="File", menu=file_menu)
 
-    help_menu = _menu(menubar, fonts)
+    help_menu = tk.Menu(menubar, tearoff=0)
     help_menu.add_command(label="Check for Updates…", command=lambda: check_for_updates(True))
     help_menu.add_checkbutton(label="Check for updates at startup",
                               variable=updates_var, command=save_settings)
@@ -930,16 +1294,22 @@ def launch_gui():
     help_menu.add_command(label="About Repo Growth", command=show_about)
     menubar.add_cascade(label="Help", menu=help_menu)
 
-    root.configure(menu=menubar)
+    tk.Tk.configure(root, menu=menubar)
     root.bind("<Control-o>", lambda _e: pick_repo())
     root.bind("<Control-g>", lambda _e: run())
+
+    # Any change to the form after a run puts the footer back to Generate;
+    # the finished files stay reachable from the File menu.
+    for var in (repo_var, exclude_var, since_var, until_var, detail_var, static_var, animated_var):
+        var.trace_add("write", show_ready)
+    show_ready()
 
     # A checkout updates with `git pull`, so only built copies check on launch.
     if updates_var.get() and updater.update_mode() != "source":
         root.after(STARTUP_CHECK_DELAY_MS, lambda: check_for_updates(manual=False))
 
     poll()
-    root.mainloop()
+    return root
 
 
 if __name__ == "__main__":

@@ -29,6 +29,8 @@ import time
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
+from version import __version__
+
 try:
     import git
 except ImportError:
@@ -596,6 +598,14 @@ def _resolve_rev(repo):
         return "HEAD", f"HEAD ({repo.head.commit.hexsha[:7]})"
 
 
+# Share of progress_pct given to sampling; churn gets the rest. Sampling
+# traverses every blob in every sampled commit, churn diffs all pairs in a
+# single git process, and sampling dominates total runtime on every real-world
+# repo I've measured, so it's weighted more heavily. The GUI reads this to turn
+# the fraction back into "commit X of Y".
+SAMPLE_WEIGHT = 0.7
+
+
 def analyse_repo(repo_path, progress=print, target_points=300,
                  progress_pct=None, cancel_event=None, exclude_dirs=(),
                  since=None, until=None):
@@ -646,11 +656,7 @@ def analyse_repo(repo_path, progress=print, target_points=300,
 
 def _analyse(repo, repo_path, progress, target_points, progress_pct,
              cancel_event, heartbeat, exclude_dirs, since=None, until=None):
-    # Sampling traverses every blob in every sampled commit; churn diffs all
-    # pairs in a single git process. Sampling dominates total runtime on
-    # every real-world repo I've measured, so we weight it more heavily.
-    SAMPLE_WEIGHT = 0.7
-    CHURN_WEIGHT  = 1.0 - SAMPLE_WEIGHT
+    CHURN_WEIGHT = 1.0 - SAMPLE_WEIGHT
 
     def _pct(v):
         if progress_pct is None:
@@ -915,8 +921,8 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 # file per family covers every weight the templates use. Bundled under the SIL
 # Open Font License — see templates/fonts/OFL.txt.
 _BUNDLED_FONTS = [
-    ("Syne",           "400 800", "Syne.woff2"),
-    ("JetBrains Mono", "100 800", "JetBrainsMono.woff2"),
+    ("Geist",      "100 900", "Geist.woff2"),
+    ("Geist Mono", "100 900", "GeistMono.woff2"),
 ]
 
 _font_faces_cache = None
@@ -962,6 +968,8 @@ def _render_template(template_name, analysis):
 
     return (template
         .replace("{{FONT_FACES}}",    _font_faces_css())
+        .replace("{{VERSION}}",       __version__)
+        .replace("{{GENERATED}}",     f"{date.today():%d %B %Y}".lstrip("0"))
         .replace("{{REPO_NAME}}",     analysis["repo_name"])
         .replace("{{BRANCH}}",        analysis["branch"])
         .replace("{{TOTAL_COMMITS}}", f"{analysis['total_commits']:,}")
