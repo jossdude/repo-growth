@@ -316,16 +316,17 @@ def _took(seconds):
 
 
 def _reveal(path):
-    """Show a file selected in Explorer / Finder, or open its folder."""
-    try:
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", path])
-        else:
-            subprocess.Popen(["xdg-open", os.path.dirname(path)])
-    except Exception:
-        pass
+    """Show a file selected in Explorer / Finder, or open its folder.
+
+    Raises on failure so the caller can say so — swallowing it left the link
+    looking dead with no clue why.
+    """
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", path])
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(path)])
 
 
 def _open_file(path):
@@ -791,8 +792,17 @@ def build_gui():
 
     def show_in_folder():
         path = last_output["static"] or last_output["animated"]
-        if path and os.path.exists(path):
+        if not path:
+            return
+        if not os.path.exists(path):
+            messagebox.showerror(
+                "Repo Growth",
+                f"Couldn't find the report. It may have been moved or deleted:\n\n{path}")
+            return
+        try:
             _reveal(path)
+        except Exception as e:
+            messagebox.showerror("Repo Growth", f"Couldn't show the report's folder:\n\n{path}\n\n{e}")
 
     # Footer status line — refreshed off the UI thread, since counting commits
     # on a large repo can take a moment. The token drops stale answers.
