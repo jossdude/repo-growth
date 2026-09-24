@@ -2,18 +2,13 @@ The fonts in this folder are bundled with Repo Growth so that generated charts
 render with their intended typefaces fully offline. They are redistributed
 unmodified under the SIL Open Font License, Version 1.1.
 
-  Syne
-    Copyright 2019 The Syne Project Authors
-    https://gitlab.com/bonjour-monde/fonderie/syne-typeface
-    Reserved Font Name: "Syne"
+  Geist (Geist.woff2)
+  Geist Mono (GeistMono.woff2)
+    Copyright (c) 2023 Vercel, in collaboration with basement.studio
+    https://github.com/vercel/geist-font
 
-  JetBrains Mono
-    Copyright 2020 The JetBrains Mono Project Authors
-    https://github.com/JetBrains/JetBrainsMono
-    Reserved Font Name: "JetBrains Mono"
-
-The files here are the latin-subset variable woff2 builds served by Google
-Fonts. The full license text follows.
+The files here are the variable woff2 builds from the `geist` npm package
+(version 1.5.1). The full license text follows.
 
 ============================================================================
 

@@ -11,7 +11,7 @@ read SVG without pulling a renderer into the project, so the mark is redrawn
 from the same coordinates, exactly as gui.py redraws it on a Canvas. Keep the
 three in step if the mark ever changes.
 
-Needs Pillow (in requirements-dev.txt); it is not a runtime dependency.
+Needs Pillow, which the GUI also uses at runtime (see gui_art.py).
 """
 
 import os

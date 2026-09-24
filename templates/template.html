@@ -3,163 +3,209 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>{{REPO_NAME}} — Repo Growth</title>
 <!-- Favicon is an inline data URI so the page stays self-contained and makes
-     no network request. Mirrors assets/logo.svg. -->
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M6 4.5 V26 H27.5' fill='none' stroke='%232a3242' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/><path d='M9.5 21.2 L14.8 16.2 L19.2 18.4 L25 9.2' fill='none' stroke='%2300e5a0' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+     no network request. Mirrors assets/logo.svg, in the page's light colours. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M6 4.5 V26 H27.5' fill='none' stroke='%2386868b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/><path d='M9.5 21.2 L14.8 16.2 L19.2 18.4 L25 9.2' fill='none' stroke='%2308865a' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
-  /* Fonts (Syne, JetBrains Mono) are embedded as base64 at generation time so
-     this page renders identically offline, with no request to Google. */
+  /* Geist / Geist Mono are embedded as base64 at generation time. They sit
+     behind the platform system fonts in the stacks below, so they only show
+     where no SF / Segoe UI is installed — but the page still never needs the
+     network to look right. */
   {{FONT_FACES}}
 
   :root {
-    --bg: #0d0f14;
-    --surface: #141720;
-    --border: #1e2230;
-    --accent: #00e5a0;
-    --accent2: #0090ff;
-    --accent3: #ff6b6b;
-    --accent4: #ffd93d;
-    --text: #e8eaf0;
-    --muted: #5a6070;
+    --bg: #f5f5f7;
+    --bar: rgba(245,245,247,0.78);
+    --card: #ffffff;
+    --text: #1d1d1f;
+    --secondary: #6e6e73;
+    --tertiary: #86868b;
+    --hairline: #e5e5ea;
+    --fill: #e8e8ed;
+    --field: #d2d2d7;
+    --accent: #08865a;
+    --on-accent: #ffffff;
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04);
+    --tip-shadow: 0 4px 24px rgba(0,0,0,0.10);
+
+    /* Chart palette, fixed order: series i always uses --c{i+1}; nothing
+       cycles. Brand green is deliberately absent — it's reserved for UI. */
+    --c1: #007aff; --c2: #ff9500; --c3: #af52de; --c4: #34c759; --c5: #ff2d55;
+    /* Up to six top file types but five palette slots: the sixth gets Apple
+       teal, picked to stay distinct from both --c1 and the grey "other". */
+    --c6: #5ac8fa;
+    --c-other: #aeaeb2;
+
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Geist, system-ui, sans-serif;
+    --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", Geist, system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Geist Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --bar: rgba(0,0,0,0.72);
+      --card: #1c1c1e;
+      --text: #f5f5f7;
+      --secondary: #a1a1a6;
+      --tertiary: #8e8e93;
+      --hairline: #2c2c2e;
+      --fill: #2c2c2e;
+      --field: #3a3a3c;
+      --accent: #32d583;
+      --on-accent: #04150d;
+      --shadow: none;
+      --tip-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      --c1: #0a84ff; --c2: #ff9f0a; --c3: #bf5af2; --c4: #30d158; --c5: #ff375f;
+      --c6: #64d2ff;
+      --c-other: #636366;
+    }
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: 'Syne', sans-serif;
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
     min-height: 100vh;
-    padding: 40px 32px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ── Header bar ─────────────────────────────────────────────────────────── */
+  .bar {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--bar);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .bar-in {
+    max-width: 1168px; margin: 0 auto; padding: 0 24px;
+    height: 52px; display: flex; align-items: center; gap: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: var(--text); flex: none; }
+  .mark { width: 24px; height: 24px; flex: none; }
+  .mark .axis  { stroke: var(--tertiary); }
+  .mark .curve { stroke: var(--accent); }
+  .nav { display: flex; gap: 22px; margin-left: auto; }
+  .nav a { color: var(--secondary); font-size: 13px; }
+  .nav a:hover { color: var(--text); }
+  .gen { color: var(--tertiary); font-size: 12px; white-space: nowrap; margin-left: 8px; }
+
+  /* ── Page frame ─────────────────────────────────────────────────────────── */
+  .wrap { max-width: 1168px; margin: 0 auto; padding: 0 24px; }
+  section { scroll-margin-top: 72px; }
+
+  .hero { padding: 88px 0 48px; }
+  .hero-meta { color: var(--accent); font-size: 17px; font-weight: 600; margin-bottom: 10px; }
+  .hero-meta p { display: inline; }
+  .hero h1 {
+    font-family: var(--display);
+    font-size: clamp(40px, 10.5vw, 80px);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+    overflow-wrap: anywhere;
+  }
+  .hero-lede {
+    margin-top: 18px;
+    font-family: var(--display);
+    font-size: clamp(19px, 2.4vw, 24px);
+    line-height: 1.35;
+    color: var(--secondary);
+    max-width: 760px;
+  }
+  .hero-lede b { color: var(--text); font-weight: 600; }
+
+  /* ── Cards ──────────────────────────────────────────────────────────────── */
+  .card {
+    background: var(--card);
+    border-radius: 18px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    min-width: 0;   /* let grid tracks shrink below the canvas' last drawn width */
   }
 
-  .header { margin-bottom: 36px; }
-  .header .brand {
-    display: flex;
-    align-items: center;
-    gap: 14px;
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+  .tile { padding: 20px 22px; }
+  .tile-label { font-size: 14px; font-weight: 600; color: var(--secondary); }
+  .tile-value {
+    font-family: var(--display);
+    font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15;
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .header .mark {
-    width: clamp(30px, 4.6vw, 52px);
-    height: auto;
-    flex: none;
-  }
-  .header h1 {
-    font-size: clamp(26px, 4vw, 46px);
-    font-weight: 800;
-    letter-spacing: -1px;
-    line-height: 1;
-  }
-  .header h1 span { color: var(--accent); }
-  .header p {
-    margin-top: 8px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
-    color: var(--muted);
+  .tile-sub {
+    font-size: 13px; color: var(--tertiary); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
   }
 
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
-    margin-bottom: 28px;
-  }
+  .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .card-head > div:first-child { min-width: 0; }
+  .card h3 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .take { color: var(--secondary); font-size: 14px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
+  /* Segmented control: fill track, selected segment lifts to the card colour. */
+  .seg { display: inline-flex; background: var(--fill); border-radius: 999px; padding: 2px; flex: none; }
+  .seg button {
+    font: inherit; font-size: 13px; font-weight: 500;
+    border: 0; background: transparent; color: var(--secondary);
+    padding: 5px 14px; border-radius: 999px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+  .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  canvas { display: block; }
+
+  /* ── At a glance ────────────────────────────────────────────────────────── */
+  .glance { margin-top: 56px; }
+  .glance h2 { font-family: var(--display); font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 14px; }
+  .glance .card { padding: 8px 24px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 40px; }
   .stat {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 18px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 13px 0;
+    border-top: 1px solid var(--hairline);
+    min-width: 0;
   }
-  .stat-value {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--accent);
-    font-family: 'JetBrains Mono', monospace;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .stat-value.neg { color: var(--accent3); }
-  .stat-label {
-    font-size: 11px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-top: 4px;
-  }
+  /* The first row of each column has no rule above it. */
+  .stat:nth-child(-n+3) { border-top: 0; }
+  .stat-l { min-width: 0; }
+  .stat-label { color: var(--secondary); font-size: 14px; }
   .stat-sub {
-    font-size: 10px;
-    color: #3a4050;
-    font-family: 'JetBrains Mono', monospace;
-    margin-top: 3px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--tertiary); font-size: 12px; margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
   }
+  .stat-value { font-size: 15px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+  .neg { color: var(--c5); }
 
-  .charts {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    margin-bottom: 20px;
+  /* ── Sections ───────────────────────────────────────────────────────────── */
+  .sec { margin-top: 96px; }
+  .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tertiary); }
+  .sec h2 {
+    font-family: var(--display);
+    font-size: clamp(28px, 4.2vw, 40px); font-weight: 700; letter-spacing: -0.025em; line-height: 1.1;
+    margin: 6px 0 24px;
   }
-  .chart-full { grid-column: 1 / -1; }
-  .chart-wrap {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 24px 28px 20px;
-  }
-  .chart-title {
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--muted);
-    margin-bottom: 14px;
-  }
-  canvas { display: block; width: 100%; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .full { grid-column: 1 / -1; }
 
-  .tooltip {
-    position: fixed;
-    background: #0a0c10;
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.1s;
-    z-index: 100;
-    max-width: 280px;
-    line-height: 1.7;
-  }
-  .tooltip.visible { opacity: 1; }
-  .t-date { color: var(--accent); font-weight: 500; }
-  .t-main { color: var(--text); font-size: 15px; font-weight: 700; }
-  .t-sub  { color: var(--muted); font-size: 11px; margin-top: 2px; word-break: break-word; }
-  .t-hash { color: var(--accent2); font-size: 11px; }
-  .t-add  { color: var(--accent); font-size: 11px; }
-  .t-rem  { color: var(--accent3); font-size: 11px; }
-
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 14px;
-  }
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 14px; font-size: 13px; color: var(--secondary); }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  .legend-item span { color: var(--tertiary); }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .legend-note { margin-left: auto; color: var(--tertiary); font-size: 12px; }
 
   /* File-type chart pairs the share-over-time stack with a donut of the hovered
      commit. Both canvases are sized in JS, so the row only handles placement —
@@ -167,85 +213,180 @@
   .ext-row { display: flex; align-items: center; }
   #extDonut { flex: none; margin-left: 22px; }
 
-  .footer {
-    margin-top: 16px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: var(--muted);
-    text-align: right;
+  /* ── Tooltip ────────────────────────────────────────────────────────────── */
+  .tooltip {
+    position: fixed; left: 0; top: 0;
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    box-shadow: var(--tip-shadow);
+    padding: 10px 13px;
+    font-size: 12px;
+    line-height: 1.55;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s;
+    z-index: 100;
+    max-width: 280px;
+    font-variant-numeric: tabular-nums;
   }
+  .tooltip.visible { opacity: 1; }
+  .t-date { color: var(--secondary); }
+  .t-main { color: var(--text); font-size: 15px; font-weight: 700; }
+  .t-sub  { color: var(--secondary); margin-top: 2px; word-break: break-word; }
+  .t-hash { color: var(--tertiary); font-family: var(--mono); font-size: 11px; }
+  .t-add  { color: var(--c1); font-weight: 600; }
+  .t-rem  { color: var(--c2); font-weight: 600; }
+  .t-row  { display: flex; align-items: center; gap: 6px; color: var(--text); }
 
-  @media (max-width: 700px) {
-    .charts { grid-template-columns: 1fr; }
-    .chart-full { grid-column: 1; }
-    body { padding: 20px 16px; }
+  .footer { text-align: center; color: var(--tertiary); font-size: 12px; padding: 72px 24px 48px; }
+
+  /* ── Responsive ─────────────────────────────────────────────────────────── */
+  @media (max-width: 1000px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .stat:nth-child(-n+3) { border-top: 1px solid var(--hairline); }
+    .stat:nth-child(-n+2) { border-top: 0; }
+  }
+  @media (max-width: 760px) {
+    .nav { display: none; }
+    .gen { margin-left: auto; }
+    .grid { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: 1fr 1fr; gap: 12px; }
+    .tile-value { font-size: 30px; }
+    .sec { margin-top: 64px; }
+    .stats { grid-template-columns: 1fr; }
+    .stat:nth-child(-n+2) { border-top: 1px solid var(--hairline); }
+    .stat:first-child { border-top: 0; }
+  }
+  @media (max-width: 520px) {
+    .bar-in, .wrap { padding: 0 16px; }
+    .hero { padding: 48px 0 32px; }
+    .hero-meta { font-size: 15px; }
+    .card { padding: 18px; }
+    .tile { padding: 16px; }
+    .glance .card { padding: 4px 18px; }
+    .gen { font-size: 11px; }
   }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="brand">
-    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M6 4.5 V26 H27.5" fill="none" stroke="#2a3242" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M9.5 21.2 L14.8 16.2 L19.2 18.4 L25 9.2" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-    <h1><span>{{REPO_NAME}}</span> growth</h1>
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="#overview">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path class="axis"  d="M6 4.5 V26 H27.5" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path class="curve" d="M9.5 21.2 L14.8 16.2 L19.2 18.4 L25 9.2" fill="none" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Repo Growth
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#activity">Activity</a>
+      <a href="#people">People</a>
+      <a href="#file-types">File types</a>
+    </nav>
+    <span class="gen">Generated {{GENERATED}}</span>
   </div>
-  <p>branch: {{BRANCH}} &nbsp;·&nbsp; {{TOTAL_COMMITS}} commits{{DATE_RANGE}}</p>
-</div>
+</header>
 
-<div class="stats-grid" id="statsGrid"></div>
+<main class="wrap">
 
-<div class="charts">
-  <div class="chart-wrap chart-full">
-    <div class="chart-title">Lines of Code — by Commit Number</div>
-    <canvas id="linesByCommitChart"></canvas>
+<section id="overview" class="hero">
+  <!-- The <p> closes straight after the commit count and optional range
+       clause: the date-range tests look for exactly that markup. -->
+  <div class="hero-meta num"><p id="heroCount">{{BRANCH}} · {{TOTAL_COMMITS}} commits{{DATE_RANGE}}</p><span id="heroRange"></span></div>
+  <h1>{{REPO_NAME}}</h1>
+  <p class="hero-lede num" id="heroLede"></p>
+</section>
+
+<div class="tiles" id="tiles"></div>
+
+<article class="card">
+  <div class="card-head">
+    <div><h3>Lines of code</h3><p class="take" id="takeLines"></p></div>
+    <div class="seg" role="group" aria-label="X axis">
+      <button type="button" data-mode="date" aria-pressed="true">By date</button>
+      <button type="button" data-mode="commit" aria-pressed="false">By commit</button>
+    </div>
   </div>
-  <div class="chart-wrap chart-full">
-    <div class="chart-title">Lines of Code — by Date</div>
-    <canvas id="linesByDateChart"></canvas>
+  <canvas id="linesChart"></canvas>
+</article>
+
+<section class="glance">
+  <h2>At a glance</h2>
+  <div class="card"><div class="stats" id="statsGrid"></div></div>
+</section>
+
+<section id="size" class="sec">
+  <p class="eyebrow">Size</p>
+  <h2>How it filled out</h2>
+  <div class="grid">
+    <article class="card">
+      <div class="card-head"><div><h3>Total files</h3><p class="take" id="takeFiles"></p></div></div>
+      <canvas id="filesChart"></canvas>
+    </article>
+    <article class="card">
+      <div class="card-head"><div><h3>Average file size</h3><p class="take" id="takeAvg"></p></div></div>
+      <canvas id="avgSizeChart"></canvas>
+    </article>
   </div>
-  <div class="chart-wrap">
-    <div class="chart-title">Total Files over Time</div>
-    <canvas id="filesChart"></canvas>
+</section>
+
+<section id="activity" class="sec">
+  <p class="eyebrow">Activity</p>
+  <h2>When the work happened</h2>
+  <div class="grid">
+    <article class="card">
+      <div class="card-head"><div><h3>Commits per week</h3><p class="take" id="takeFreq"></p></div></div>
+      <canvas id="freqChart"></canvas>
+    </article>
+    <article class="card">
+      <div class="card-head"><div><h3>Churn</h3><p class="take" id="takeChurn"></p></div></div>
+      <canvas id="churnChart"></canvas>
+      <div class="legend">
+        <span class="legend-item"><i class="legend-dot" style="background:var(--c1)"></i>Added (above)</span>
+        <span class="legend-item"><i class="legend-dot" style="background:var(--c2)"></i>Removed (below)</span>
+        <span class="legend-note num" id="churnNote"></span>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head"><div><h3>Commits by weekday</h3><p class="take" id="takeDow"></p></div></div>
+      <canvas id="dowChart"></canvas>
+    </article>
+    <article class="card">
+      <div class="card-head"><div><h3>Commits by hour</h3><p class="take" id="takeHour"></p></div></div>
+      <canvas id="hourChart"></canvas>
+    </article>
   </div>
-  <div class="chart-wrap">
-    <div class="chart-title">Average File Size (lines) over Time</div>
-    <canvas id="avgSizeChart"></canvas>
-  </div>
-  <div class="chart-wrap">
-    <div class="chart-title">Commits per Week</div>
-    <canvas id="freqChart"></canvas>
-  </div>
-  <div class="chart-wrap">
-    <div class="chart-title">Churn — Lines Added vs Removed</div>
-    <canvas id="churnChart"></canvas>
-  </div>
-  <div class="chart-wrap chart-full">
-    <div class="chart-title">Contributors over Time</div>
+</section>
+
+<section id="people" class="sec">
+  <p class="eyebrow">People</p>
+  <h2>Who built it</h2>
+  <article class="card">
+    <div class="card-head"><div><h3>Contributors over time</h3><p class="take" id="takeContrib"></p></div></div>
     <canvas id="contribChart"></canvas>
-  </div>
-  <div class="chart-wrap">
-    <div class="chart-title">Commits by Day of Week</div>
-    <canvas id="dowChart"></canvas>
-  </div>
-  <div class="chart-wrap">
-    <div class="chart-title">Commits by Hour of Day</div>
-    <canvas id="hourChart"></canvas>
-  </div>
-  <div class="chart-wrap chart-full">
-    <div class="chart-title">Lines by File Type over Time</div>
+  </article>
+</section>
+
+<section id="file-types" class="sec">
+  <p class="eyebrow">Languages</p>
+  <h2>What it's made of</h2>
+  <article class="card">
+    <div class="card-head"><div><h3>Lines by file type</h3><p class="take" id="takeExt"></p></div></div>
     <div class="ext-row">
       <canvas id="extChart"></canvas>
       <canvas id="extDonut"></canvas>
     </div>
     <div class="legend" id="extLegend"></div>
-  </div>
-</div>
+  </article>
+</section>
+
+</main>
 
 <div class="tooltip" id="tooltip"></div>
-<div class="footer">generated by repo_growth.py &nbsp;·&nbsp; {{TOTAL_COMMITS}} commits analysed</div>
+<footer class="footer">Made with Repo Growth {{VERSION}} · everything in this file works offline</footer>
 
 <script>
 const RAW   = {{DATA_JSON}};
@@ -262,81 +403,291 @@ const _maxLines = Math.max(..._sorted.map(d=>d.lines)) || 1;
 const _filtered = _sorted.filter(d => d.lines > _maxLines * 0.02);
 const DATA = _filtered.length >= 2 ? _filtered : _sorted;
 
-const EXT_COLORS = ['#00e5a0','#0090ff','#ff6b6b','#ffd93d','#c77dff','#ff9f43'];
 const extName = e => e === '__other__' ? 'other' : e;
+const fmt = n => Number(n || 0).toLocaleString();
+// Commit messages and author names come straight from git; escape them before
+// they go anywhere near innerHTML.
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const plural = (n, w) => `${fmt(n)} ${w}${n === 1 ? '' : 's'}`;
+
+/* ── Theme ─────────────────────────────────────────────────────────────────
+   Canvas can't see CSS, so colours are read from the custom properties and the
+   whole page redraws when the OS theme flips. One source of truth: the :root
+   tokens in the stylesheet. */
+const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Geist, system-ui, sans-serif';
+let T = {};
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = n => cs.getPropertyValue(n).trim();
+  T = {
+    card: v('--card'), text: v('--text'), secondary: v('--secondary'),
+    tertiary: v('--tertiary'), hairline: v('--hairline'),
+    // Palette slots 0-4, then the sixth-file-type teal. Never cycled.
+    pal: [v('--c1'), v('--c2'), v('--c3'), v('--c4'), v('--c5'), v('--c6')],
+    other: v('--c-other'),
+  };
+}
+function rgba(hex, a) {
+  const h = hex.replace('#', '');
+  const f = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const n = parseInt(f, 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+const axisFont = () => `11px ${SANS}`;
+
+/* ── Dates and wording ─────────────────────────────────────────────────── */
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Parse YYYY-MM-DD by hand: new Date('2025-07-14') is UTC midnight and would
+// print as the 13th anywhere west of Greenwich.
+function ymd(s) { const [y, m, d] = String(s || '').slice(0,10).split('-').map(Number); return {y, m: (m||1) - 1, d: d||1}; }
+const longDate  = s => { const t = ymd(s); return isNaN(t.y) ? '' : `${t.d} ${MON[t.m]} ${t.y}`; };
+// Axis ticks name months ("Jul ’25"), except on a history short enough that
+// every tick would read the same month — then they name days ("14 Jul").
+const DAY_TICKS = (Date.parse(STATS.last_date) - Date.parse(STATS.first_date)) / 864e5 < 75;
+const tickOf = (y, m, d) => DAY_TICKS ? `${d} ${MON[m]}` : `${MON[m]} ’${String(y).slice(2)}`;
+const monthTick  = s  => { const t = ymd(s); return tickOf(t.y, t.m, t.d); };
+const monthTickT = ms => { const d = new Date(ms); return tickOf(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
+
+// Human span for the hero sentence: days, then weeks, then months, then years.
+function spanWords(days) {
+  days = Math.round(days || 0);
+  if (days < 1)   return 'a single day';
+  if (days < 14)  return plural(days, 'day');
+  if (days < 60)  return plural(Math.round(days / 7), 'week');
+  if (days < 730) return plural(Math.round(days / 30.44), 'month');
+  return `${+(days / 365.25).toFixed(1)} years`;
+}
+const signed = n => (n >= 0 ? '+' : '−') + fmt(Math.abs(n));
 
 const tooltip = document.getElementById('tooltip');
 function showTip(e, html) {
   tooltip.innerHTML = html;
   tooltip.classList.add('visible');
-  tooltip.style.left = Math.min(e.clientX + 16, window.innerWidth - 290) + 'px';
-  tooltip.style.top  = (e.clientY - 10) + 'px';
+  // Measure after filling so the tip never hangs off the right edge — on a
+  // phone that would also create a horizontal scroll.
+  const w = tooltip.offsetWidth, h = tooltip.offsetHeight;
+  let x = e.clientX + 16;
+  if (x + w > window.innerWidth - 8) x = Math.max(8, e.clientX - w - 16);
+  const y = Math.max(8, Math.min(e.clientY - 10, window.innerHeight - h - 8));
+  tooltip.style.left = x + 'px';
+  tooltip.style.top  = y + 'px';
 }
 function hideTip() { tooltip.classList.remove('visible'); }
+const setText = (id, s) => { document.getElementById(id).textContent = s; };
 
-// Stats
+/* ── Hero ──────────────────────────────────────────────────────────────── */
+if (STATS.first_date && STATS.last_date) {
+  // A windowed run already names its window in the server-rendered clause.
+  if (!document.getElementById('heroCount').textContent.includes('→'))
+    document.getElementById('heroRange').textContent = ` · ${longDate(STATS.first_date)} – ${longDate(STATS.last_date)}`;
+}
+(() => {
+  const a = STATS.lines_start || 0, b = STATS.lines_now || 0;
+  const files = plural(STATS.files_now || 0, 'file');
+  const span = spanWords(STATS.age_days);
+  const verb = b > a ? 'Grew from' : 'Went from';
+  document.getElementById('heroLede').innerHTML = b === a
+    ? `Held at <b>${fmt(b)}</b> lines across <b>${files}</b> over ${span}.`
+    : `${verb} <b>${fmt(a)}</b> to <b>${fmt(b)}</b> lines across <b>${files}</b> in ${span}.`;
+})();
+
+/* ── Headline tiles ────────────────────────────────────────────────────── */
+(() => {
+  const top = esc(STATS.top_author || '—');
+  const tiles = [
+    ['Lines of code', fmt(STATS.lines_now),     `${signed(STATS.net_change || 0)} since start`],
+    ['Files',         fmt(STATS.files_now),     `avg ${fmt(Math.round(STATS.avg_file_size || 0))} lines each`],
+    ['Commits',       fmt(STATS.total_commits), `${plural(STATS.active_weeks || 0, 'active week')}`],
+    ['Contributors',  fmt(STATS.author_count),  (STATS.author_count || 0) <= 1
+                                                   ? `just ${top}`
+                                                   : `top: ${top} · ${Math.round(STATS.top_author_pct || 0)}%`],
+  ];
+  document.getElementById('tiles').innerHTML = tiles.map(([label, val, sub]) => `
+    <div class="card tile">
+      <div class="tile-label">${label}</div>
+      <div class="tile-value">${val}</div>
+      <div class="tile-sub" title="${sub}">${sub}</div>
+    </div>`).join('');
+})();
+
+/* ── At a glance ───────────────────────────────────────────────────────── */
 const sg = document.getElementById('statsGrid');
 const net = STATS.net_change;
 const netStr = (net >= 0 ? '+' : '') + net.toLocaleString();
 const netClass = net >= 0 ? '' : 'neg';
-const fmt = n => Number(n || 0).toLocaleString();
 const ageStr = STATS.age_days >= 365 ? (STATS.age_days / 365).toFixed(1) + ' yrs' : STATS.age_days + ' days';
-const largestName = (STATS.largest_file.name || '—').split('/').pop();
-[
+const largestName = esc((STATS.largest_file.name || '—').split('/').pop());
+sg.innerHTML = [
   [fmt(STATS.lines_now),                                 'Lines now',          ''],
   [fmt(STATS.files_now),                                 'Files now',          ''],
   [`<span class="${netClass}">${netStr}</span>`,         'Net line change',    ''],
   [fmt(STATS.peak_lines),                                'Peak lines',         STATS.peak_date],
   [STATS.avg_file_size + ' lines',                       'Avg file size',      'median ' + fmt(STATS.median_file_size)],
   [fmt(STATS.largest_file.lines) + ' lines',             'Largest file',       largestName],
-  [STATS.dominant_ext + ' · ' + STATS.dominant_ext_pct + '%', 'Dominant type', 'share of codebase'],
+  [esc(STATS.dominant_ext) + ' · ' + STATS.dominant_ext_pct + '%', 'Dominant type', 'share of codebase'],
   [ageStr,                                               'Repo age',           STATS.first_date + ' → ' + STATS.last_date],
   ['+' + fmt(STATS.growth_per_day) + '/day',             'Avg growth',         'net lines per day'],
   [STATS.survival_rate + '%',                            'Code survival',      fmt(STATS.total_added) + ' lines written'],
   [fmt(STATS.total_commits),                             'Total commits',      ''],
-  [fmt(STATS.author_count),                              'Contributors',       'top ' + STATS.top_author_pct + '% · ' + STATS.top_author],
+  [fmt(STATS.author_count),                              'Contributors',       'top ' + STATS.top_author_pct + '% · ' + esc(STATS.top_author)],
   [STATS.active_weeks + ' weeks',                        'Active weeks',       STATS.avg_commits_per_active_week + ' commits/wk avg'],
   [STATS.most_active_count + ' commits',                 'Busiest week',       STATS.most_active_week],
   [STATS.longest_streak_weeks + ' wks',                  'Longest streak',     'consecutive active weeks'],
   [STATS.longest_gap_weeks + ' wks',                     'Longest gap',        'quietest stretch'],
   [STATS.busiest_day,                                    'Busiest day',        STATS.weekend_pct + '% on weekends'],
   [STATS.night_owl_pct + '%',                            'Night owl',          'commits 10pm–6am'],
-  ['+' + fmt(STATS.biggest_addition.delta),              'Biggest addition',   STATS.biggest_addition.date + ' · ' + (STATS.biggest_addition.message||'').slice(0,30)],
-  [`<span class="neg">−${fmt(STATS.biggest_removal.delta)}</span>`, 'Biggest cleanup', STATS.biggest_removal.date + ' · ' + (STATS.biggest_removal.message||'').slice(0,30)],
-].forEach(([val, label, sub]) => {
-  sg.innerHTML += `<div class="stat">
+  ['+' + fmt(STATS.biggest_addition.delta),              'Biggest addition',   STATS.biggest_addition.date + ' · ' + esc((STATS.biggest_addition.message||'').slice(0,30))],
+  [`<span class="neg">−${fmt(STATS.biggest_removal.delta)}</span>`, 'Biggest cleanup', STATS.biggest_removal.date + ' · ' + esc((STATS.biggest_removal.message||'').slice(0,30))],
+].map(([val, label, sub]) => `<div class="stat">
+    <div class="stat-l">
+      <div class="stat-label">${label}</div>
+      ${sub ? `<div class="stat-sub" title="${sub}">${sub}</div>` : ''}
+    </div>
     <div class="stat-value">${val}</div>
-    <div class="stat-label">${label}</div>
-    ${sub ? `<div class="stat-sub" title="${sub}">${sub}</div>` : ''}
-  </div>`;
-});
+  </div>`).join('');
 
+/* ── Takeaways ─────────────────────────────────────────────────────────────
+   One plain sentence per chart, computed from the same data it plots. Each
+   one has a fallback so tiny repos (one author, a couple of weeks) still get
+   something true rather than "0× growth". */
+function takeaways() {
+  const n = DATA.length, first = DATA[0] || {}, last = DATA[n-1] || {};
+
+  setText('takeLines', STATS.peak_lines > STATS.lines_now
+    ? `Peaked at ${fmt(STATS.peak_lines)} lines on ${longDate(STATS.peak_date)}; ${fmt(STATS.lines_now)} now`
+    : `${signed(STATS.net_change || 0)} lines since the start, about ${fmt(Math.round(STATS.growth_per_day || 0))} a day`);
+
+  const f0 = first.files || 0, f1 = last.files || 0;
+  const ratio = f0 > 0 ? f1 / f0 : 0;
+  setText('takeFiles',
+    ratio >= 2   ? `Files grew ${ratio < 10 ? +ratio.toFixed(1) : Math.round(ratio)}× since the start`
+    : f1 > f0    ? `Up from ${fmt(f0)} to ${plural(f1, 'file')}`
+    : f1 < f0    ? `Down from ${fmt(f0)} to ${plural(f1, 'file')}`
+    :              `Holding at ${plural(f1, 'file')}`);
+
+  const a0 = Math.round(first.avg_file_size || 0), a1 = Math.round(last.avg_file_size || 0);
+  setText('takeAvg', a0 === a1
+    ? `Steady at about ${fmt(a1)} lines per file`
+    : `About ${fmt(a1)} lines per file now, ${a1 < a0 ? 'down' : 'up'} from ${fmt(a0)}`);
+
+  const weeks = Object.keys(FREQ).length;
+  setText('takeFreq', weeks <= 1
+    ? `All ${plural(STATS.total_commits || 0, 'commit')} landed in one week`
+    : `Peaked at ${plural(STATS.most_active_count || 0, 'commit')} in the week of ${STATS.most_active_week}`);
+
+  const added = STATS.total_added || 0, removed = STATS.total_removed || 0;
+  setText('takeChurn',
+    !added && !removed ? 'No line changes recorded'
+    : !removed         ? 'Nothing removed yet; every change added lines'
+    : added >= removed ? `${+(added / removed).toFixed(1)} lines added for every line removed`
+    :                    `${+(removed / added || 0).toFixed(1)} lines removed for every line added`);
+
+  const dow = STATS.dow_hist || [];
+  setText('takeDow', dow.some(v => v > 0) ? `${STATS.busiest_day} is the busiest day` : 'No commits to count yet');
+
+  setText('takeHour', busyHoursText(STATS.hour_hist || []));
+
+  const people = STATS.author_count || 0;
+  setText('takeContrib', people <= 1
+    ? `${STATS.top_author || 'One person'} wrote every commit`
+    : `${fmt(people)} people have contributed; ${STATS.top_author} made ${Math.round(STATS.top_author_pct || 0)}% of commits`);
+
+  setText('takeExt', EXTS.length && STATS.dominant_ext
+    ? `${STATS.dominant_ext} makes up ${Math.round(STATS.dominant_ext_pct || 0)}% of the code`
+    : 'No file-type breakdown for this range');
+}
+
+// Shortest run of hours (wrapping past midnight) that holds 60% of commits —
+// "most commits land between" is then literally true.
+function busyHoursText(h) {
+  const tot = h.reduce((s, v) => s + v, 0);
+  if (!tot) return 'No commits to count yet';
+  const pad = x => String(x % 24).padStart(2, '0') + ':00';
+  for (let len = 1; len <= 24; len++) {
+    for (let s = 0; s < 24; s++) {
+      let c = 0;
+      for (let k = 0; k < len; k++) c += h[(s + k) % 24] || 0;
+      if (c >= tot * 0.6) {
+        if (len >= 16) return 'Commits are spread across the whole day';
+        if (len === 1) return `Most commits land in the ${pad(s)} hour`;
+        return `Most commits land between ${pad(s)} and ${pad(s + len)}`;
+      }
+    }
+  }
+  return '';
+}
+
+/* ── Canvas plumbing ───────────────────────────────────────────────────── */
 function setupCanvas(canvas, W, H) {
   const dpr = window.devicePixelRatio || 1;
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   return ctx;
 }
 
-/* `fmt` optionally overrides the axis label format (used by the file-type
-   chart, whose axis is a 0-100% share rather than a line count). */
-function drawGrid(ctx, PAD, CW, CH, minY, maxY, steps, fmt) {
+// Width of an element's content box — the card's padding differs between
+// desktop and phone, so hard-coding it is how charts end up overflowing.
+function contentWidth(el) {
+  const cs = getComputedStyle(el);
+  return Math.floor(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+}
+// Charts get a little shorter on phones so a card isn't taller than the screen.
+const chartH = (W, base) => W < 480 ? Math.round(base * 0.8) : base;
+
+/* The Y gutter is sized to the widest tick label rather than a fixed 88px:
+   on a phone that's the difference between a chart and a sliver. */
+function yGutter(ctx, minY, maxY, steps, fmtFn) {
+  ctx.font = axisFont();
+  let w = 0;
   for (let i = 0; i <= steps; i++) {
     const v = minY + (maxY - minY) / steps * i;
-    const y = PAD.top + CH - ((v - minY) / (maxY - minY)) * CH;
-    ctx.strokeStyle = '#1a1e28'; ctx.lineWidth = 1;
+    w = Math.max(w, ctx.measureText(fmtFn ? fmtFn(v) : Math.round(v).toLocaleString()).width);
+  }
+  return Math.ceil(w) + 12;
+}
+
+/* `fmt` optionally overrides the axis label format (used by the file-type
+   chart, whose axis is a 0-100% share rather than a line count). Horizontal
+   rules only, in the hairline colour — the data should be the loudest thing. */
+function drawGrid(ctx, PAD, CW, CH, minY, maxY, steps, fmtFn) {
+  let prev = null;
+  for (let i = 0; i <= steps; i++) {
+    const v = minY + (maxY - minY) / steps * i;
+    const y = Math.round(PAD.top + CH - ((v - minY) / (maxY - minY)) * CH) + 0.5;
+    ctx.strokeStyle = T.hairline; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + CW, y); ctx.stroke();
-    ctx.fillStyle = '#5a6070'; ctx.font = '11px JetBrains Mono,monospace'; ctx.textAlign = 'right';
-    ctx.fillText(fmt ? fmt(v) : Math.round(v).toLocaleString(), PAD.left - 8, y + 4);
+    // Small ranges (1-2 contributors) round several ticks to the same integer;
+    // keep the rule but only label the first of a run.
+    const label = fmtFn ? fmtFn(v) : Math.round(v).toLocaleString();
+    if (label === prev) continue;
+    prev = label;
+    ctx.fillStyle = T.tertiary; ctx.font = axisFont(); ctx.textAlign = 'right';
+    ctx.fillText(label, PAD.left - 8, y + 4);
   }
 }
 
+// How many labels fit: step through the series so neighbours never collide.
+function labelStep(ctx, n, CW, sample) {
+  ctx.font = axisFont();
+  const fit = Math.max(2, Math.floor(CW / (ctx.measureText(sample).width + 16)));
+  return Math.max(1, Math.ceil(n / fit));
+}
+
+// Draws x tick labels, skipping any that repeat the previous one (commit-
+// indexed axes often land two ticks in the same month).
+function xTicks(ctx, H, PAD, ticks) {
+  ctx.fillStyle = T.tertiary; ctx.textAlign = 'center'; ctx.font = axisFont();
+  let prev = null;
+  ticks.forEach(([x, label]) => { if (label !== prev) ctx.fillText(label, x, H - PAD.bottom + 18); prev = label; });
+}
+
 function drawXLabels(ctx, n, H, PAD, CW, labelFn) {
-  const step = Math.max(1, Math.floor(n / 7));
-  ctx.fillStyle = '#5a6070'; ctx.textAlign = 'center'; ctx.font = '11px JetBrains Mono,monospace';
-  for (let i = 0; i < n; i += step) ctx.fillText(labelFn(i), PAD.left + (i/(n-1||1))*CW, H - PAD.bottom + 18);
+  const step = labelStep(ctx, n, CW, labelFn(0));
+  const ticks = [];
+  for (let i = 0; i < n; i += step) ticks.push([PAD.left + (i/(n-1||1))*CW, labelFn(i)]);
+  xTicks(ctx, H, PAD, ticks);
 }
 
 function smoothLine(ctx, pts) {
@@ -348,17 +699,18 @@ function smoothLine(ctx, pts) {
 }
 
 function drawLineChart(canvas, values, color, dataRef, labelFn, H, byDate) {
-  H = H || 260;
-  const W = canvas.parentElement.clientWidth - 56;
+  const W = contentWidth(canvas.parentElement);
+  H = chartH(W, H || 240);
   const ctx = setupCanvas(canvas, W, H);
-  const PAD = {top:16, right:16, bottom:44, left:88};
-  const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
   const n = values.length;
   if (n < 2) return;
 
   const minVal = Math.min(...values), maxVal = Math.max(...values);
   const pad = (maxVal - minVal) * 0.1 || 1;
   const minY = Math.max(0, minVal - pad), maxY = maxVal + pad;
+
+  const PAD = {top:12, right:24, bottom:36, left:yGutter(ctx, minY, maxY, 4)};
+  const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
 
   let xp;
   if (byDate) {
@@ -373,17 +725,16 @@ function drawLineChart(canvas, values, color, dataRef, labelFn, H, byDate) {
 
   drawGrid(ctx, PAD, CW, CH, minY, maxY, 4);
   if (byDate) {
+    // Evenly spaced time ticks, as many as fit without touching.
     const times = dataRef.map(d => new Date(d.date).getTime());
     const tMin = times[0], tMax = times[n-1];
-    ctx.fillStyle = '#5a6070'; ctx.textAlign = 'center'; ctx.font = '11px JetBrains Mono,monospace';
-    for (let i = 0; i <= 7; i++) {
-      const t = tMin + (tMax - tMin) * (i / 7);
-      const x = PAD.left + (i / 7) * CW;
-      const dt = new Date(t);
-      ctx.fillText(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`, x, H - PAD.bottom + 18);
-    }
+    ctx.font = axisFont();
+    const k = Math.max(1, Math.min(7, Math.floor(CW / (ctx.measureText('Mmm ’00').width + 24))));
+    const ticks = [];
+    for (let i = 0; i <= k; i++) ticks.push([PAD.left + (i / k) * CW, monthTickT(tMin + (tMax - tMin) * (i / k))]);
+    xTicks(ctx, H, PAD, ticks);
   } else {
-    drawXLabels(ctx, n, H, PAD, CW, i => dataRef[i].date.slice(0,7));
+    drawXLabels(ctx, n, H, PAD, CW, i => monthTick(dataRef[i].date));
   }
 
   const pts = values.map((v,i) => ({x:xp(i), y:yp(v)}));
@@ -391,11 +742,11 @@ function drawLineChart(canvas, values, color, dataRef, labelFn, H, byDate) {
   smoothLine(ctx, pts);
   ctx.lineTo(xp(n-1), PAD.top+CH); ctx.lineTo(xp(0), PAD.top+CH); ctx.closePath();
   const g = ctx.createLinearGradient(0,PAD.top,0,PAD.top+CH);
-  g.addColorStop(0, color+'30'); g.addColorStop(1, color+'00');
+  g.addColorStop(0, rgba(color, 0.18)); g.addColorStop(1, rgba(color, 0));
   ctx.fillStyle = g; ctx.fill();
 
   smoothLine(ctx, pts);
-  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
 
   canvas._pts = values.map((v,i) => ({x:xp(i), y:yp(v), v, d:dataRef[i]}));
   canvas.onmousemove = e => {
@@ -408,30 +759,34 @@ function drawLineChart(canvas, values, color, dataRef, labelFn, H, byDate) {
 }
 
 function drawBarChart(canvas, labels, values, color) {
-  const W = canvas.parentElement.clientWidth - 56, H = 260;
+  const W = contentWidth(canvas.parentElement), H = chartH(W, 240);
   const ctx = setupCanvas(canvas, W, H);
-  const PAD = {top:16, right:16, bottom:44, left:52};
-  const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
   const n = values.length;
+  if (!n) return;
   const maxY = Math.max(...values) * 1.1 || 1;
-  const yp = v => PAD.top + CH - (v/maxY)*CH;
+  const PAD = {top:12, right:8, bottom:36, left:yGutter(ctx, 0, maxY, 4)};
+  const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
 
   drawGrid(ctx, PAD, CW, CH, 0, maxY, 4);
 
   const barW = Math.max(2, CW/n*0.7);
+  const r = Math.min(4, barW/2);
   const rects = [];
+  ctx.fillStyle = color;
   values.forEach((v,i) => {
     const x = PAD.left + (i+0.5)/n*CW - barW/2;
     const bh = (v/maxY)*CH, y = PAD.top+CH-bh;
-    ctx.fillStyle = color + '99';
-    ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x,y,barW,bh,2); else ctx.rect(x,y,barW,bh);
-    ctx.fill();
+    if (bh > 0) {
+      // Round the top only; the baseline end stays square against the axis.
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x,y,barW,bh,[Math.min(r,bh),Math.min(r,bh),0,0]); else ctx.rect(x,y,barW,bh);
+      ctx.fill();
+    }
     rects.push({x, w:barW, v, label:labels[i]});
   });
 
-  const step = Math.max(1, Math.floor(n/10));
-  ctx.fillStyle='#5a6070'; ctx.textAlign='center'; ctx.font='11px JetBrains Mono,monospace';
+  const step = labelStep(ctx, n, CW, labels.reduce((a, b) => String(b).length > String(a).length ? b : a, ''));
+  ctx.fillStyle = T.tertiary; ctx.textAlign='center'; ctx.font = axisFont();
   for (let i=0;i<n;i+=step) ctx.fillText(labels[i], PAD.left+(i+0.5)/n*CW, H-PAD.bottom+18);
 
   canvas.onmousemove = e => {
@@ -450,14 +805,14 @@ function drawBarChart(canvas, labels, values, color) {
 function drawChurnGrid(ctx, PAD, CW, half, zeroY, maxY, stepsPerSide) {
   for (let i = -stepsPerSide; i <= stepsPerSide; i++) {
     const v = (maxY / stepsPerSide) * i;
-    const y = zeroY - (v / maxY) * half;
+    const y = Math.round(zeroY - (v / maxY) * half) + 0.5;
     const zero = i === 0;
-    ctx.strokeStyle = zero ? '#2b3140' : '#1a1e28'; ctx.lineWidth = 1;
+    ctx.strokeStyle = zero ? T.tertiary : T.hairline; ctx.lineWidth = zero ? 0.75 : 1;
     ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + CW, y); ctx.stroke();
     // Tint the tick labels toward their series so the two halves are
-    // self-labelling without a second legend.
-    ctx.fillStyle = zero ? '#5a6070' : (i > 0 ? 'rgba(0,229,160,0.6)' : 'rgba(255,107,107,0.6)');
-    ctx.font = '11px JetBrains Mono,monospace'; ctx.textAlign = 'right';
+    // self-labelling even before the eye reaches the legend.
+    ctx.fillStyle = zero ? T.tertiary : rgba(i > 0 ? T.pal[0] : T.pal[1], 0.85);
+    ctx.font = axisFont(); ctx.textAlign = 'right';
     ctx.fillText(Math.round(Math.abs(v)).toLocaleString(), PAD.left - 8, y + 4);
   }
 }
@@ -496,20 +851,22 @@ function churnTipLabel(c) {
 }
 
 function drawChurnChart(canvas, churn) {
-  const W = canvas.parentElement.clientWidth - 56, H = 300;
+  const W = contentWidth(canvas.parentElement), H = chartH(W, 260);
   const ctx = setupCanvas(canvas, W, H);
-  const PAD = {top:16, right:16, bottom:44, left:68};
-  const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
+  const note = document.getElementById('churnNote');
+  note.textContent = '';
   if (!churn.length) return;
 
-  const series = bucketChurn(churn, Math.max(1, Math.floor(CW / CHURN_MIN_SLOT)));
+  // Bucket against a provisional plot width; the gutter only depends on maxY,
+  // which in turn depends on the buckets, so a fixed estimate breaks the cycle.
+  const series = bucketChurn(churn, Math.max(1, Math.floor((W - 72) / CHURN_MIN_SLOT)));
   const n = series.length;
   const bucketed = n < churn.length;
 
   // Cap Y axis when a single bar (typically a bulk-paste commit) would dwarf
   // the rest. Only kicks in for true extreme outliers: cap = 5x the 95th
   // percentile, and clipping only triggers when rawMax exceeds that cap.
-  // Bars above the cap clip at the plot edge with a brighter accent stripe.
+  // Bars above the cap clip at the plot edge with a full-strength stripe.
   // Computed on the bucketed series, since that's what actually gets drawn.
   const _all = series.flatMap(c => [c.added, c.removed]).filter(v => v > 0).sort((a,b) => a-b);
   const _p95 = _all.length ? _all[Math.min(_all.length - 1, Math.floor(_all.length * 0.95))] : 0;
@@ -517,6 +874,9 @@ function drawChurnChart(canvas, churn) {
   const cap = _p95 * 5;
   const clipping = cap > 0 && rawMax > cap;
   const maxY = clipping ? cap : rawMax * 1.1;
+
+  const PAD = {top:12, right:8, bottom:36, left:yGutter(ctx, 0, maxY, 2)};
+  const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
 
   // Symmetric halves rather than halves scaled to each series' own max: equal
   // pixels per line above and below is what makes "added vs removed" readable
@@ -527,6 +887,7 @@ function drawChurnChart(canvas, churn) {
 
   const slotW = CW / n;
   const barW  = Math.max(1, slotW * 0.7);
+  const rad   = Math.min(4, barW / 2);
   const rects = [];
 
   function drawBar(cx, value, fill, accent, dir) {
@@ -534,9 +895,11 @@ function drawChurnChart(canvas, churn) {
     if (h <= 0) return;
     const x = cx - barW / 2;
     const y = dir < 0 ? zeroY - h : zeroY;
+    const r = Math.min(rad, h);
     ctx.fillStyle = fill;
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x, y, barW, h, dir < 0 ? [1,1,0,0] : [0,0,1,1]);
+    // Round the outer end only, so the two halves still meet on the baseline.
+    if (ctx.roundRect) ctx.roundRect(x, y, barW, h, dir < 0 ? [r,r,0,0] : [0,0,r,r]);
     else ctx.rect(x, y, barW, h);
     ctx.fill();
     if (value > maxY) {
@@ -545,28 +908,22 @@ function drawChurnChart(canvas, churn) {
     }
   }
 
+  const add = T.pal[0], rem = T.pal[1];
   series.forEach((c,i) => {
     const cx = PAD.left + (i+0.5)*slotW;
-    drawBar(cx, c.added,   '#00e5a055', '#00e5a0', -1);
-    drawBar(cx, c.removed, '#ff6b6b55', '#ff6b6b',  1);
+    drawBar(cx, c.added,   rgba(add, 0.6), add, -1);
+    drawBar(cx, c.removed, rgba(rem, 0.6), rem,  1);
     rects.push({cx, slotW, c, i});
   });
 
-  const step = Math.max(1, Math.floor(n/8));
-  ctx.fillStyle='#5a6070'; ctx.textAlign='center'; ctx.font='11px JetBrains Mono,monospace';
-  for (let i=0;i<n;i+=step) ctx.fillText(series[i].date.slice(0,7), PAD.left+(i+0.5)*slotW, H-PAD.bottom+18);
+  const step = labelStep(ctx, n, CW, 'Mmm ’00');
+  const ticks = [];
+  for (let i=0;i<n;i+=step) ticks.push([PAD.left+(i+0.5)*slotW, monthTick(series[i].date)]);
+  xTicks(ctx, H, PAD, ticks);
 
-  ctx.fillStyle='#00e5a0'; ctx.fillRect(PAD.left, H-8, 10, 6);
-  ctx.fillStyle='#5a6070'; ctx.textAlign='left'; ctx.font='11px JetBrains Mono,monospace';
-  ctx.fillText('added (above)', PAD.left+14, H-3);
-  ctx.fillStyle='#ff6b6b'; ctx.fillRect(PAD.left+120, H-8, 10, 6);
-  ctx.fillStyle='#5a6070'; ctx.fillText('removed (below)', PAD.left+134, H-3);
   // Say so when bars aren't one-per-commit — the axis numbers mean something
   // different under bucketing and the reader can't tell by looking.
-  if (bucketed) {
-    ctx.textAlign='right'; ctx.fillStyle='#3f4756';
-    ctx.fillText(`${series[0].count} commits per bar`, PAD.left+CW, H-3);
-  }
+  if (bucketed) note.textContent = `${series[0].count} commits per bar`;
 
   canvas.onmousemove = e => {
     const mx = e.clientX - canvas.getBoundingClientRect().left;
@@ -574,10 +931,10 @@ function drawChurnChart(canvas, churn) {
     if (idx >= 0 && idx < n) {
       const c = series[idx];
       const clipped = c.added > maxY || c.removed > maxY;
-      const note = clipped
+      const capNote = clipped
         ? `<div class="t-sub">scaled to fit — Y axis capped at ${Math.round(maxY).toLocaleString()}</div>`
         : '';
-      showTip(e, `${churnTipLabel(c)}<div class="t-add">+${c.added.toLocaleString()} added</div><div class="t-rem">−${c.removed.toLocaleString()} removed</div>${note}`);
+      showTip(e, `${churnTipLabel(c)}<div class="t-add">+${c.added.toLocaleString()} added</div><div class="t-rem">−${c.removed.toLocaleString()} removed</div>${capNote}`);
     } else hideTip();
   };
   canvas.onmouseleave = hideTip;
@@ -591,7 +948,7 @@ function drawDonut(canvas, vals, exts, colors, size) {
   const tot = vals.reduce((s, v) => s + v, 0);
   const rOuter = size/2 - 8;
   if (rOuter <= 0 || tot <= 0) return;
-  const rInner = rOuter * 0.6;
+  const rInner = rOuter * 0.64;
   const cx = size/2, cy = size/2;
 
   let a0 = -Math.PI/2;   // start at 12 o'clock
@@ -602,12 +959,12 @@ function drawDonut(canvas, vals, exts, colors, size) {
     ctx.arc(cx, cy, rOuter, a0, a1);
     ctx.arc(cx, cy, rInner, a1, a0, true);
     ctx.closePath();
-    ctx.fillStyle = colors[i] + 'bb';
+    ctx.fillStyle = colors[i];
     ctx.fill();
-    // Surface-coloured hairline: without it, adjacent slices of a similar hue
+    // Card-coloured hairline: without it, adjacent slices of a similar hue
     // merge into one wedge and the sub-1% types disappear entirely.
-    ctx.strokeStyle = '#141720';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = T.card;
+    ctx.lineWidth = 2;
     ctx.stroke();
     a0 = a1;
   });
@@ -616,24 +973,24 @@ function drawDonut(canvas, vals, exts, colors, size) {
   let bi = 0;
   vals.forEach((v, i) => { if (v > vals[bi]) bi = i; });
   ctx.textAlign = 'center';
-  ctx.fillStyle = colors[bi];
-  ctx.font = '600 22px Inter,system-ui,sans-serif';
-  ctx.fillText(Math.round(vals[bi]/tot*100) + '%', cx, cy - 1);
-  ctx.fillStyle = '#5a6070';
-  ctx.font = '11px JetBrains Mono,monospace';
-  ctx.fillText(extName(exts[bi]), cx, cy + 17);
+  ctx.fillStyle = T.text;
+  ctx.font = `700 26px ${SANS}`;
+  ctx.fillText(Math.round(vals[bi]/tot*100) + '%', cx, cy + 2);
+  ctx.fillStyle = T.secondary;
+  ctx.font = `13px ${SANS}`;
+  ctx.fillText(extName(exts[bi]), cx, cy + 22);
 }
 
 function drawStackedChart(canvas, donutCanvas, data, exts, colors) {
-  // The row is already inside .chart-wrap's padding, so unlike the other charts
-  // there's no 56px to subtract here.
-  const rowW = canvas.parentElement.clientWidth;
+  // .ext-row has no padding of its own, so its content width is the card's.
+  const rowW = contentWidth(canvas.parentElement);
   const showDonut = rowW >= 700;   // narrower than this and the stack should have the width
   const DONUT = showDonut ? 240 : 0, GAP = showDonut ? 22 : 0;
   donutCanvas.style.display = showDonut ? 'block' : 'none';
-  const W = Math.max(160, rowW - DONUT - GAP), H = 280;
+  const W = Math.max(160, rowW - DONUT - GAP), H = chartH(W, 280);
   const ctx = setupCanvas(canvas, W, H);
-  const PAD = {top:16, right:16, bottom:44, left:88};
+  const pctFmt = v => Math.round(v*100) + '%';
+  const PAD = {top:12, right:24, bottom:36, left:yGutter(ctx, 0, 1, 4, pctFmt)};
   const CW = W - PAD.left - PAD.right, CH = H - PAD.top - PAD.bottom;
   const n = data.length;
   if (n < 2 || !exts.length) return;
@@ -641,9 +998,8 @@ function drawStackedChart(canvas, donutCanvas, data, exts, colors) {
   // Append an "other" band (everything not in the top extensions) so the
   // stack totals up to the real line count instead of silently dropping
   // uncommon / non-top file types.
-  const OTHER_COLOR = '#3a4050';
   const allExts = [...exts, '__other__'];
-  const allColors = [...colors, OTHER_COLOR];
+  const allColors = [...colors, T.other];
   const extVal = (d, e) => {
     if (e === '__other__') {
       const top = exts.reduce((s,x) => s + ((d.ext_lines&&d.ext_lines[x])||0), 0);
@@ -665,8 +1021,8 @@ function drawStackedChart(canvas, donutCanvas, data, exts, colors) {
   const xp = i => PAD.left + (i/(n-1))*CW;
   const yp = f => PAD.top + CH - f*CH;
 
-  drawGrid(ctx, PAD, CW, CH, 0, 1, 4, v => Math.round(v*100) + '%');
-  drawXLabels(ctx, n, H, PAD, CW, i => data[i].date.slice(0,7));
+  drawGrid(ctx, PAD, CW, CH, 0, 1, 4, pctFmt);
+  drawXLabels(ctx, n, H, PAD, CW, i => monthTick(data[i].date));
 
   for (let ei = allExts.length-1; ei >= 0; ei--) {
     const top = stacks.map((s,i) => ({x:xp(i), y:yp(s[ei])}));
@@ -680,20 +1036,18 @@ function drawStackedChart(canvas, donutCanvas, data, exts, colors) {
         else { const prev=bot[j-1]; const cpx=(prev.x+p.x)/2; ctx.bezierCurveTo(cpx,prev.y,cpx,p.y,p.x,p.y); }
       });
     }
-    ctx.closePath(); ctx.fillStyle=allColors[ei]+'bb'; ctx.fill();
+    ctx.closePath(); ctx.fillStyle = rgba(allColors[ei], 0.85); ctx.fill();
   }
 
   // Shares as text as well as counts: the donut can't render a sub-1% type
   // legibly, so the legend is where those stay readable.
   const last = data[n-1];
   const lastTot = allExts.reduce((s, e) => s + extVal(last, e), 0);
-  const legendEl = document.getElementById('extLegend');
-  legendEl.innerHTML = '';
-  allExts.forEach((ext,i) => {
+  document.getElementById('extLegend').innerHTML = allExts.map((ext,i) => {
     const v = extVal(last, ext);
     const pct = lastTot > 0 ? (v/lastTot*100).toFixed(1) : '0.0';
-    legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${allColors[i]}"></div>${extName(ext)} (${v.toLocaleString()} · ${pct}%)</div>`;
-  });
+    return `<span class="legend-item"><i class="legend-dot" style="background:${allColors[i]}"></i>${esc(extName(ext))} <span>${v.toLocaleString()} · ${pct}%</span></span>`;
+  }).join('');
 
   const donutAt = d => {
     if (showDonut) drawDonut(donutCanvas, allExts.map(e => extVal(d, e)), allExts, allColors, DONUT);
@@ -709,28 +1063,55 @@ function drawStackedChart(canvas, donutCanvas, data, exts, colors) {
     let html = `<div class="t-date">${d.date}</div>`;
     allExts.forEach((ext,i) => {
       const v=extVal(d, ext);
-      html += `<div style="color:${allColors[i]};font-size:11px">${extName(ext)}: ${v.toLocaleString()}</div>`;
+      html += `<div class="t-row"><i class="legend-dot" style="background:${allColors[i]}"></i>${esc(extName(ext))}: ${v.toLocaleString()}</div>`;
     });
     showTip(e, html);
   };
   canvas.onmouseleave = () => { hideTip(); donutAt(last); };
 }
 
-function drawAll() {
-  drawLineChart(document.getElementById('linesByCommitChart'), DATA.map(d=>d.lines), '#00e5a0', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v.toLocaleString()} lines</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`, 300);
-  drawLineChart(document.getElementById('linesByDateChart'),   DATA.map(d=>d.lines), '#ff9f43', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v.toLocaleString()} lines</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`, 300, true);
-  drawLineChart(document.getElementById('filesChart'),   DATA.map(d=>d.files),         '#0090ff', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v.toLocaleString()} files</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`);
-  drawLineChart(document.getElementById('avgSizeChart'), DATA.map(d=>d.avg_file_size), '#c77dff', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v} lines/file</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`);
-  drawBarChart(document.getElementById('freqChart'), Object.keys(FREQ), Object.values(FREQ), '#ffd93d');
-  drawChurnChart(document.getElementById('churnChart'), CHURN);
-  drawLineChart(document.getElementById('contribChart'), DATA.map(d=>d.authors||0), '#c77dff', DATA, p=>`<div class="t-date">${p.d.date}</div><div class="t-main">${p.v.toLocaleString()} contributor${p.v===1?'':'s'}</div><div class="t-hash">${p.d.hash}</div><div class="t-sub">${p.d.message}</div>`, 260, true);
-  drawBarChart(document.getElementById('dowChart'), ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], STATS.dow_hist || [], '#0090ff');
-  drawBarChart(document.getElementById('hourChart'), Array.from({length:24}, (_,h)=>String(h).padStart(2,'0')), STATS.hour_hist || [], '#00e5a0');
-  drawStackedChart(document.getElementById('extChart'), document.getElementById('extDonut'), DATA, EXTS, EXT_COLORS.slice(0, EXTS.length));
+/* ── Drawing ───────────────────────────────────────────────────────────────
+   Colour rule: every single-series chart uses palette[0]. Colour only starts
+   to mean something once there are 2+ series (churn, file types), and there
+   it's always palette[i] for series i. */
+const commitTip = unit => p => `<div class="t-date">${p.d.date}</div><div class="t-main">${unit(p.v)}</div><div class="t-hash">${esc(p.d.hash)}</div><div class="t-sub">${esc(p.d.message)}</div>`;
+let linesMode = 'date';
+
+function drawLines() {
+  drawLineChart(document.getElementById('linesChart'), DATA.map(d=>d.lines), T.pal[0], DATA,
+    commitTip(v => `${v.toLocaleString()} lines`), 300, linesMode === 'date');
 }
 
+function drawAll() {
+  readTheme();
+  hideTip();
+  const c = T.pal[0];
+  drawLines();
+  drawLineChart(document.getElementById('filesChart'),   DATA.map(d=>d.files),         c, DATA, commitTip(v => `${v.toLocaleString()} files`));
+  drawLineChart(document.getElementById('avgSizeChart'), DATA.map(d=>d.avg_file_size), c, DATA, commitTip(v => `${v} lines/file`));
+  drawBarChart(document.getElementById('freqChart'), Object.keys(FREQ), Object.values(FREQ), c);
+  drawChurnChart(document.getElementById('churnChart'), CHURN);
+  drawLineChart(document.getElementById('contribChart'), DATA.map(d=>d.authors||0), c, DATA, commitTip(v => `${v.toLocaleString()} contributor${v===1?'':'s'}`), 260, true);
+  drawBarChart(document.getElementById('dowChart'), ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], STATS.dow_hist || [], c);
+  drawBarChart(document.getElementById('hourChart'), Array.from({length:24}, (_,h)=>String(h).padStart(2,'0')), STATS.hour_hist || [], c);
+  // Palette slots 0-4 then teal for a sixth type; "other" is added inside.
+  drawStackedChart(document.getElementById('extChart'), document.getElementById('extDonut'), DATA, EXTS, T.pal.slice(0, EXTS.length));
+}
+
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+  linesMode = b.dataset.mode;
+  document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  hideTip();
+  drawLines();
+}));
+
+takeaways();
 drawAll();
-window.addEventListener('resize', drawAll);
+// rAF-coalesced: a drag-resize fires dozens of events per frame.
+let _raf = 0;
+window.addEventListener('resize', () => { cancelAnimationFrame(_raf); _raf = requestAnimationFrame(drawAll); });
+const _mq = window.matchMedia('(prefers-color-scheme: dark)');
+(_mq.addEventListener ? _mq.addEventListener.bind(_mq, 'change') : _mq.addListener.bind(_mq))(drawAll);
 </script>
 </body>
 </html>

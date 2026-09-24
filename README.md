@@ -2,20 +2,25 @@
 
 # repo-growth
 
-[![Latest release](https://img.shields.io/github/v/release/jossdude/repo-growth?color=00e5a0&label=download)](https://github.com/jossdude/repo-growth/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/jossdude/repo-growth/total?color=00e5a0)](https://github.com/jossdude/repo-growth/releases)
-[![License](https://img.shields.io/github/license/jossdude/repo-growth?color=00e5a0)](LICENSE)
-![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-00e5a0)
+[![Latest release](https://img.shields.io/github/v/release/jossdude/repo-growth?color=08865a&label=download)](https://github.com/jossdude/repo-growth/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/jossdude/repo-growth/total?color=08865a)](https://github.com/jossdude/repo-growth/releases)
+[![License](https://img.shields.io/github/license/jossdude/repo-growth?color=08865a)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-08865a)
 
 Visualise how a Git repository has grown over time. Generates self-contained, interactive HTML — your choice of a **static dashboard**, an **animated scroll-through story**, or both.
 
-![The Repo Growth desktop app](docs/images/screenshot.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png">
+  <img src="docs/images/screenshot.png" alt="The Repo Growth desktop app">
+</picture>
 
-*Point it at a local repo, pick a detail level, choose your outputs, and click Generate.*
+*Point it at a local repo, pick a period and a detail level, choose what to create, and click Generate. The window follows your system's light or dark setting.*
 
-The **static dashboard** charts lines of code (by commit number and by date), total files, average file size, churn (added/removed), commits per week, contributors over time, commits by day of week and hour of day, and a breakdown by file type — a 100%-stacked area showing how the mix shifted over time, paired with a donut of the hovered commit (with an "other" band so the bands account for the real total). Above the charts sits a grid of ~20 summary stats: peak lines, repo age, average growth/day, code-survival rate, dominant file type, contributor count, busiest week/day, night-owl share, longest active streak and gap, largest/median file, biggest single addition and cleanup, and more.
+The **dashboard** opens with the repo's headline numbers — lines of code, files, commits, contributors — over a full-width lines-of-code chart you can switch between **by date** and **by commit**. Below that it charts total files, average file size, churn (added/removed), commits per week, contributors over time, commits by day of week and hour of day, and a breakdown by file type — a 100%-stacked area showing how the mix shifted over time, paired with a donut of the hovered commit (with an "other" band so the bands account for the real total). Every chart carries a one-line takeaway in plain English ("Tuesday is the busiest day"), and an **At a glance** list holds ~20 summary stats: peak lines, repo age, average growth/day, code-survival rate, dominant file type, contributor count, busiest week/day, night-owl share, longest active streak and gap, largest/median file, biggest single addition and cleanup, and more.
 
-The **animated story** replays that history as you scroll — chapter by chapter through lines, files, file types, churn and contributors — with milestone callouts (1k/10k/100k…) flashing in as the line crosses them, a **by commit / by date** switch for the x-axis (by commit spreads out days with several commits; the choice is remembered), a **▶ play** button that auto-scrolls the whole thing, and a count-up stat summary at the end.
+The dashboard is light by default and switches to a dark theme with your system setting.
+
+The **story** replays that history as you scroll — chapter by chapter through lines, files, file types, churn and contributors — each chart drawing itself in behind a glowing playhead while a big number counts up, with milestone pills ("25,000 lines") appearing as the line crosses them. A **by commit / by date** switch sets the x-axis (by commit spreads out days with several commits; the choice is remembered), a chapter list on the right jumps between chapters, a **play** button auto-scrolls the whole thing, and the finale sums it up in six big stats.
 
 Works on local clones — including private repos. The analysis runs entirely on your machine, and the generated pages embed their own fonts, so an open chart makes **no network requests** at all. Share or archive a single HTML file that renders identically offline.
 
@@ -55,9 +60,11 @@ Downloads come from the GitHub Releases API and are refused if the URL or any re
 pip install -r requirements.txt
 ```
 
-Requires Python 3.8+ and `git` on your `PATH`. The GUI uses Tkinter, which ships
-with Python on Windows and macOS; on some Linux distributions it's a separate
-package (e.g. `sudo apt install python3-tk`).
+Requires Python 3.8+ and `git` on your `PATH`. The GUI is built with
+[CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) and Pillow (both
+in `requirements.txt`) on top of Tkinter, which ships with Python on Windows and
+macOS; on some Linux distributions it's a separate package (e.g.
+`sudo apt install python3-tk`).
 
 ## Usage
 
@@ -65,11 +72,13 @@ package (e.g. `sudo apt install python3-tk`).
 python main.py
 ```
 
-The Tk GUI opens. **File** holds the same actions as the buttons — Choose Repository (`Ctrl+O`), Generate (`Ctrl+G`), Cancel, and opening either result — and **Help** covers About and updates.
+The window opens. **File** holds the same actions as the buttons — Choose Repository (`Ctrl+O`), Generate (`Ctrl+G`), Cancel, and opening either result — and **Help** covers About and updates.
 
-Pick a repository folder, optionally list folders to **Exclude** (comma-separated, matched at any depth — e.g. `tests` to leave test code out of every chart), optionally set a **Date range**, choose a **Detail level**, tick which **Outputs** you want (**Static dashboard** and/or **Animated story**), then click **Generate**. Progress streams to the log panel; **Cancel** stops a run at the next commit boundary, and **Open Static** / **Open Animated** launch each result when it's done. Your last-used repo and options are remembered between sessions.
+Under **Source**, choose a repository folder and optionally list folders to **Exclude** (comma-separated, matched at any depth — e.g. `tests` to leave test code out of every chart). Under **Range**, pick a **Period**; under **Analysis**, a **Detail** level. Under **Create**, click the **Dashboard** and/or **Story** tiles to choose what to generate (a green outline and tick mark each one that's on), then click **Generate**. The footer shows where the files will be saved and how many commits the branch has.
 
-**Date range** is optional and empty by default, which charts the whole history. Fill in either box (`YYYY-MM-DD`, both inclusive) to chart a window instead, or use **Last day** / **Last week** / **Last month** to fill them in for you; **All time** clears them again. Leaving one box blank leaves that end open — a start date with no end means "everything since". The highlighted button shows which window the entries currently describe, and typing a date by hand drops the highlight.
+While it runs, a panel over the form shows which commit it's on, roughly how long is left and a progress bar; **Details** expands the timestamped log, and **Cancel** stops the run at the next commit boundary. When it's done, the footer says how long it took and offers **Open Story**, **Open Dashboard** and **Show in folder**. Your last-used repo and options are remembered between sessions.
+
+**Period** defaults to **All time**, which charts the whole history. **Last day** / **Last week** / **Last month** fill in the **Custom dates** for you; to chart any other window, type the dates (`YYYY-MM-DD`, both inclusive) and the period switches to **Custom**. Leaving one date blank leaves that end open — a start date with no end means "everything since".
 
 Everything in the report then describes that window alone: growth is measured from the first commit inside it, not from the repo's first commit, and the commit count, contributor and churn figures follow the same window.
 
@@ -144,7 +153,8 @@ The installer lands in `installer/Output/`. CI compiles the script on any pull r
 
 ```
 main.py                          entry point — GUI by default, headless CLI with args
-gui.py                           Tk GUI; imports the analysis functions
+gui.py                           desktop GUI (CustomTkinter); imports the analysis functions
+gui_art.py                       the GUI's logo tile, icons and output previews, drawn with Pillow
 repo_growth.py                   analysis core + HTML generators (no GUI dependency)
 updater.py                       release check + in-place update (no GUI dependency)
 version.py                       the version string, stamped from the tag at build time
@@ -156,6 +166,7 @@ assets/
   logo.svg                       the mark — source of truth for the artwork
   logo.ico, logo.png             the same mark as window, taskbar and exe icons
 tools/make_icons.py              redraws those two from the mark (needs Pillow)
+tools/screenshot_gui.py          captures the GUI in its ready/running/done states (Windows)
 repo_growth.spec                 PyInstaller build recipe (standalone program)
 installer/repo_growth.iss        Inno Setup recipe (Windows per-user installer)
 .github/workflows/build.yml      CI: build + publish binaries on a v* tag
@@ -166,7 +177,7 @@ LICENSE
 
 - `repo_growth.py` — commit traversal, line counts, churn, contributor/time distributions, sampling, plus `generate_html` and `generate_animated_html`, which fill in the templates.
 - The templates use placeholders like `{{DATA_JSON}}` that are filled in at generation time. Edit them directly to tweak styling or chart logic — no Python brace-escaping needed.
-- `templates/fonts/` holds the Syne and JetBrains Mono woff2 files; the generator base64-encodes them into each page so the output is a single self-contained, offline file (see [Self-hosted fonts](#self-hosted-fonts)).
+- `templates/fonts/` holds the Geist and Geist Mono woff2 files; the generator base64-encodes them into each page so the output is a single self-contained, offline file (see [Self-hosted fonts](#self-hosted-fonts)).
 
 ## Troubleshooting
 
@@ -186,12 +197,12 @@ LICENSE
 
 ## Self-hosted fonts
 
-The charts use [Syne](https://gitlab.com/bonjour-monde/fonderie/syne-typeface) and
-[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), bundled under
-`templates/fonts/` and embedded into each generated page as base64. Nothing is
-fetched from a font CDN, so pages render the same with no internet connection.
-Both fonts are licensed under the SIL Open Font License 1.1 — see
-[`templates/fonts/OFL.txt`](templates/fonts/OFL.txt).
+The pages use the system UI font first — SF Pro on Apple devices, Segoe UI
+Variable on Windows — and fall back to [Geist and Geist Mono](https://github.com/vercel/geist-font),
+bundled under `templates/fonts/` and embedded into each generated page as base64.
+Nothing is fetched from a font CDN, so pages render the same with no internet
+connection. Both Geist fonts are licensed under the SIL Open Font License 1.1 —
+see [`templates/fonts/OFL.txt`](templates/fonts/OFL.txt).
 
 ## License
 
