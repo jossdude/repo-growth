@@ -3,6 +3,7 @@
 import ctypes
 import json
 import os
+import pathlib
 import queue
 import re
 import subprocess
@@ -327,6 +328,22 @@ def _reveal(path):
         pass
 
 
+def _open_file(path):
+    """Open a generated page in the default browser.
+
+    Hands the file itself to the OS rather than building a file:/// URL by
+    hand: a folder name containing '#' or '%' turned that URL into a
+    different, missing file, and the open failed without a word.
+    """
+    path = os.path.abspath(path)
+    if sys.platform == "win32":
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    elif not webbrowser.open(pathlib.Path(path).as_uri()):
+        subprocess.Popen(["xdg-open", path])
+
+
 def _place_near(win, parent, dx=90, dy=90):
     win.geometry(f"+{parent.winfo_rootx() + dx}+{parent.winfo_rooty() + dy}")
 
@@ -526,8 +543,17 @@ def build_gui():
 
     def open_path(key):
         path = last_output.get(key, "")
-        if path and os.path.exists(path):
-            webbrowser.open(f"file:///{os.path.abspath(path).replace(os.sep, '/')}")
+        if not path:
+            return
+        if not os.path.exists(path):
+            messagebox.showerror(
+                "Repo Growth",
+                f"Couldn't find the report. It may have been moved or deleted:\n\n{path}")
+            return
+        try:
+            _open_file(path)
+        except Exception as e:
+            messagebox.showerror("Repo Growth", f"Couldn't open the report:\n\n{path}\n\n{e}")
 
     def write_log(text):
         stamp = datetime.now().strftime("%H:%M:%S")
