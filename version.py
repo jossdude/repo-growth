@@ -6,4 +6,4 @@ always reports the tag it was built from. Bump this by hand when tagging so
 source runs report something sensible too.
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
